@@ -172,7 +172,8 @@ def run_mpc_simulation(duration: float = 20.0, dt: float = 0.02,
         v_max=2.0,
         omega_max=3.0,
         solver='OSQP',                    # Faster: ECOS→OSQP
-        block_size=2                      # Move-blocking: halves decision vars
+        block_size=2,                     # Move-blocking: halves decision vars
+        w_max=0.05                        # Tube MPC: disturbance bound (5cm)
     )
     
     # Yaw stabilizer for cold-start bootstrap (first N steps)

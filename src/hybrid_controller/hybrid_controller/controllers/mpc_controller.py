@@ -91,7 +91,7 @@ class MPCController:
                  d_safe: float = 0.3, slack_penalty: float = 5000.0,
                  v_max: float = 1.0, omega_max: float = 1.5,
                  dt: float = 0.02, solver: str = "OSQP",
-                 block_size: int = 1):
+                 block_size: int = 1, w_max: float = 0.05):
         """
         Initialize MPC controller.
         
@@ -107,6 +107,8 @@ class MPCController:
             dt: Sampling time (seconds)
             solver: CVXPY solver to use (ECOS, SCS, OSQP)
             block_size: Move-blocking size (1=no blocking, 2=halve decision vars)
+            w_max: Maximum disturbance bound for Tube MPC (meters)
+                   Accounts for localization noise, model mismatch, actuator delays
         """
         self.N = horizon
         self.dt = dt
@@ -116,6 +118,7 @@ class MPCController:
         self.omega_max = omega_max
         self.solver = solver
         self.block_size = block_size
+        self.w_max = w_max  # Tube MPC disturbance bound
         
         # Number of blocked control moves
         self.N_blocks = (horizon + block_size - 1) // block_size
@@ -227,11 +230,14 @@ class MPCController:
             constraints.append(x[k + 1] == A_d @ x[k] + B_d @ u[k])
         
         # Actuator constraints: |v| ≤ v_max, |ω| ≤ ω_max
+        # Tube MPC: minimal tightening (5%) to maintain performance while adding safety margin
+        v_max_robust = self.v_max * 0.95
+        omega_max_robust = self.omega_max * 0.95
         for k in range(self.N):
-            constraints.append(u[k, 0] >= -self.v_max)
-            constraints.append(u[k, 0] <= self.v_max)
-            constraints.append(u[k, 1] >= -self.omega_max)
-            constraints.append(u[k, 1] <= self.omega_max)
+            constraints.append(u[k, 0] >= -v_max_robust)
+            constraints.append(u[k, 0] <= v_max_robust)
+            constraints.append(u[k, 1] >= -omega_max_robust)
+            constraints.append(u[k, 1] <= omega_max_robust)
         
         # Obstacle avoidance constraints (linearized)
         slack_idx = 0
@@ -255,7 +261,8 @@ class MPCController:
                     ny = dy / dist
                     
                     # Linearized constraint: n·(p - p_obs) ≥ d_safe + r_obs
-                    safe_dist = self.d_safe + obs.radius
+                    # Tube MPC: add disturbance bound for robustness
+                    safe_dist = self.d_safe + obs.radius + self.w_max
                     
                     if slack is not None:
                         constraints.append(
@@ -428,12 +435,15 @@ class MPCController:
             constraints.append(dx[k + 1] == A_d @ dx[k] + B_d @ du_expanded[k])
         
         # Actuator constraints on TOTAL control u = u_ref + du
+        # Tube MPC: minimal tightening (5%) to maintain performance while adding safety margin
+        v_max_robust = self.v_max * 0.95
+        omega_max_robust = self.omega_max * 0.95
         for k in range(self.N):
             u_total = u_refs[k] + du_expanded[k]
-            constraints.append(u_total[0] >= -self.v_max)
-            constraints.append(u_total[0] <= self.v_max)
-            constraints.append(u_total[1] >= -self.omega_max)
-            constraints.append(u_total[1] <= self.omega_max)
+            constraints.append(u_total[0] >= -v_max_robust)
+            constraints.append(u_total[0] <= v_max_robust)
+            constraints.append(u_total[1] >= -omega_max_robust)
+            constraints.append(u_total[1] <= omega_max_robust)
         
         # Obstacle constraints on TOTAL state x = x_ref + dx
         slack_idx = 0
@@ -449,7 +459,8 @@ class MPCController:
                 
                 if dist > 0.01:
                     nx, ny = dx_obs / dist, dy_obs / dist
-                    safe_dist = self.d_safe + obs.radius
+                    # Tube MPC: add disturbance bound for robustness
+                    safe_dist = self.d_safe + obs.radius + self.w_max
                     
                     # Constraint: n·(p - p_obs) ≥ safe_dist
                     # p = p_ref + dp
