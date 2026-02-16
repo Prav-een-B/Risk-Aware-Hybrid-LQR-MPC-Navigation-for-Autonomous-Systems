@@ -15,6 +15,8 @@
 3. [Controllers Module](#3-controllers-module)
    - [lqr_controller.py](#31-lqr_controllerpy)
    - [mpc_controller.py](#32-mpc_controllerpy)
+   - [yaw_stabilizer.py](#33-yaw_stabilizerpy)
+   - [hybrid_blender.py](#34-hybrid_blenderpy-new-in-v060)
 4. [Trajectory Module](#4-trajectory-module)
    - [reference_generator.py](#41-reference_generatorpy)
 5. [Logging Module](#5-logging-module)
@@ -486,16 +488,23 @@ class MPCSolution:
 
 #### Class: `MPCController`
 
-##### `__init__(self, horizon, Q_diag, R_diag, P_diag, d_safe, slack_penalty, v_max, omega_max, dt, solver)`
+##### `__init__(self, horizon, Q_diag, R_diag, P_diag, S_diag, d_safe, slack_penalty, v_max, omega_max, dt, solver, block_size, w_max)`
 
 **Key Parameters:**
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `horizon` | 10 | Prediction horizon N |
-| `P_diag` | [20, 20, 2] | Terminal cost (higher for stability) |
+| `P_diag` | [20, 20, 40] | Terminal cost (higher for stability) |
+| `S_diag` | [0.1, 0.5] | Control rate-of-change weights (Δu penalty). Penalizes `u[k] - u[k-1]` to reduce aggressive control jumps. Reference: Rawlings et al., *Model Predictive Control*, Ch. 1.3 |
 | `d_safe` | 0.3 | Safety distance from obstacles (m) |
-| `slack_penalty` | 1000 | Weight $\rho$ for soft constraints |
-| `solver` | "ECOS" | CVXPY solver backend |
+| `slack_penalty` | 5000 | Weight ρ for soft constraints |
+| `solver` | "OSQP" | CVXPY solver backend |
+| `block_size` | 1 | Move-blocking size |
+| `w_max` | 0.05 | Tube MPC disturbance bound (m) |
+
+**Adaptive Weight Scheduling (v0.5.0):**
+
+During the first `_ramp_up_steps` (default 10) time steps, the heading weight `Q[2,2]` is scaled by a factor that decays linearly from 2.0 to 1.0. This prioritizes heading alignment during the transient startup phase, at a modest cost to position tracking accuracy. Reference: MDPI Sensors 2024, "Improved MPC with adaptive weight adjustment."
 
 ---
 
@@ -503,12 +512,14 @@ class MPCSolution:
 
 **Optimization Problem:**
 
-$$\min_{u_0, ..., u_{N-1}} \sum_{k=0}^{N-1} \left( \|x_k - x_{ref,k}\|_Q^2 + \|u_k\|_R^2 \right) + \|x_N - x_{ref,N}\|_P^2$$
+$$\min_{u_0, ..., u_{N-1}} \sum_{k=0}^{N-1} \left( \|x_k - x_{ref,k}\|_Q^2 + \|u_k\|_R^2 + \|u_k - u_{k-1}\|_S^2 \right) + \|x_N - x_{ref,N}\|_P^2$$
 
 subject to:
 $$x_{k+1} = A_d x_k + B_d u_k \quad \text{(dynamics)}$$
 $$|v_k| \leq v_{max}, \quad |\omega_k| \leq \omega_{max} \quad \text{(actuator limits)}$$
-$$\|p_k - p_{obs}\| \geq d_{safe} + r_{obs} \quad \text{(obstacle avoidance)}$$
+$$\|p_k - p_{obs}\| \geq d_{safe} + r_{obs} + w_{max} \quad \text{(obstacle avoidance, Tube MPC)}$$
+
+The third term in the cost function (Δu penalty, weighted by S) penalizes the rate of change of control inputs between consecutive timesteps. This produces smoother control trajectories and reduces heading spikes.
 
 **CVXPY Implementation:**
 
@@ -523,6 +534,8 @@ cost = 0
 for k in range(N):
     cost += cp.quad_form(x[k] - x_refs[k], Q)
     cost += cp.quad_form(u[k], R)
+    if k > 0:  # Control rate penalty
+        cost += cp.quad_form(u[k] - u[k-1], S)
 cost += cp.quad_form(x[N] - x_refs[N], P)
 cost += slack_penalty * cp.sum_squares(slack)  # Soft constraint penalty
 
@@ -649,6 +662,104 @@ $$\omega_{cmd} = K_p e_\theta + K_i \int e_\theta + K_d \dot{e}_\theta + \omega_
 - **Derivative Smoothing**: Uses low-pass filter on derivative term
 - **Anti-Windup**: Clamps integral term
 - **Angle Wrapping**: Handles $\pm \pi$ discontinuities correctly
+
+---
+
+### 3.4 hybrid_blender.py (New in v0.6.0)
+
+**Location:** `src/hybrid_controller/hybrid_controller/controllers/hybrid_blender.py`
+
+Implements continuous control arbitration between LQR and MPC using a smooth blending law with anti-chatter guarantees.
+
+---
+
+#### Data Class: `BlendInfo`
+
+```python
+@dataclass
+class BlendInfo:
+    weight: float          # w(t) in [0, 1]: 0=LQR, 1=MPC
+    weight_raw: float      # Pre-filtered sigmoid output
+    risk: float            # Combined risk input
+    mode: str              # 'LQR_DOMINANT', 'BLENDED', 'MPC_DOMINANT'
+    dw_dt: float           # Rate of weight change
+    feasibility_ok: bool   # MPC feasibility status
+    solver_time_ms: float  # MPC solver time
+```
+
+---
+
+#### Class: `BlendingSupervisor`
+
+##### `__init__(self, k_sigmoid, risk_threshold, dw_max, hysteresis_band, solver_time_limit, feasibility_decay, dt)`
+
+**Parameters:**
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `k_sigmoid` | 10.0 | Sigmoid steepness (higher = sharper transition) |
+| `risk_threshold` | 0.3 | Risk level at sigmoid midpoint ($w = 0.5$) |
+| `dw_max` | 2.0 | Maximum $|dw/dt|$ in s$^{-1}$ (anti-chatter) |
+| `hysteresis_band` | 0.05 | Half-width of deadband around threshold |
+| `solver_time_limit` | 5.0 | MPC solver time limit (ms) |
+| `feasibility_decay` | 0.8 | Decay factor when MPC infeasible |
+| `feasibility_margin_threshold` | 0.1 | Slack magnitude threshold for w reduction |
+| `dt` | 0.02 | Simulation timestep |
+
+---
+
+##### Blending Pipeline
+
+The weight $w(t)$ is computed through a 4-stage pipeline:
+
+$$\text{risk} \xrightarrow{\text{sigmoid}} w_{raw} \xrightarrow{\text{hysteresis}} w_{hyst} \xrightarrow{\text{rate limit}} w_{lim} \xrightarrow{\text{feasibility}} w(t)$$
+
+**Stage 1 — Sigmoid mapping:**
+$$w_{raw} = \sigma(k \cdot (r - r_{th})) = \frac{1}{1 + e^{-k(r - r_{th})}}$$
+
+**Stage 2 — Hysteresis deadband:**
+If $r \in [r_{th} - h, r_{th} + h]$, hold $w = w_{prev}$. Prevents oscillatory switching near the threshold.
+
+**Stage 3 — Rate limiting (anti-chatter guarantee):**
+$$w_{lim} = \text{clip}(w_{hyst}, \; w_{prev} - \dot{w}_{max} \cdot \Delta t, \; w_{prev} + \dot{w}_{max} \cdot \Delta t)$$
+
+Guarantees Lipschitz continuity of $w(t)$ and bounded control rate.
+
+**Stage 4 — Feasibility fallback with consecutive escalation:**
+
+Degradation escalates with consecutive MPC failures:
+- 1 failure: $w \leftarrow w \cdot \lambda$
+- 2 consecutive: $w \leftarrow w \cdot \lambda^2$
+- $n$ consecutive: $w \leftarrow w \cdot \lambda^n$ (exponential ramp-down to LQR)
+
+Also responds to high **feasibility margin** (slack usage from MPC solution):
+- If `slack_magnitude > feasibility_margin_threshold`: proportional $w$ reduction (up to 30%)
+- Consecutive counter is not reset on high-slack events (treated as early warning)
+
+---
+
+##### `blend(self, u_lqr, u_mpc, risk, solver_status, solver_time_ms) -> (u_blend, BlendInfo)`
+
+**Convex Combination:**
+$$u_{blend} = w \cdot u_{MPC} + (1 - w) \cdot u_{LQR}$$
+
+**Property:** If $\|u_{LQR}\| \leq u_{max}$ and $\|u_{MPC}\| \leq u_{max}$, then $\|u_{blend}\| \leq u_{max}$ (convexity).
+
+---
+
+##### `get_statistics(self) -> Dict`
+
+Returns:
+```python
+{
+    'weight_mean': float,
+    'weight_std': float,
+    'total_switches': int,        # Times w crossed 0.5
+    'infeasible_count': int,
+    'lqr_dominant_fraction': float,  # w < 0.1
+    'mpc_dominant_fraction': float,  # w > 0.9
+    'blended_fraction': float,       # 0.1 <= w <= 0.9
+}
+```
 
 ---
 
@@ -786,6 +897,8 @@ Comprehensive logging system with multiple output formats.
 | `log_constraint_event()` | Records constraint activations |
 | `log_mpc_solve()` | Logs MPC solver diagnostics |
 | `log_obstacle_proximity()` | Warns about obstacle proximity |
+| `log_hybrid_step()` | Records blend weight, risk, mode, jerk (v0.6.0) |
+| `compute_jerk_metrics()` | Static: peak/RMS/p95 jerk from controls (v0.6.0) |
 
 ##### Export Methods
 

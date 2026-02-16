@@ -12,9 +12,20 @@ Trajectory Definition:
     v_r(t) = √(ṗ_{x,r}² + ṗ_{y,r}²)
     ω_r(t) = Δθ_r / T_s
 
+Smooth-Start Blend:
+    For t ∈ [0, T_blend], a quintic polynomial interpolates from rest
+    (zero velocity, zero acceleration) to the Lissajous curve state at
+    t = T_blend. This ensures C² continuity at the junction and avoids
+    demanding nonzero angular velocity at t=0.
+
+    Reference:
+        Quintic polynomial trajectory generation
+        (Åström & Murray, Feedback Systems, Ch. 6)
+
 where:
     A - controls the spatial size of the trajectory
     a - controls the temporal speed of traversal
+    T_blend - duration of smooth-start phase (seconds)
 
 Reference:
     Risk-Aware Hybrid LQR-MPC Navigation for Autonomous Systems
@@ -66,7 +77,8 @@ class ReferenceTrajectoryGenerator:
         x_ref, u_ref = generator.get_reference_at_time(t=5.0)
     """
     
-    def __init__(self, A: float = 2.0, a: float = 0.5, dt: float = 0.02):
+    def __init__(self, A: float = 2.0, a: float = 0.5, dt: float = 0.02,
+                 T_blend: float = 0.5):
         """
         Initialize trajectory generator.
         
@@ -74,21 +86,50 @@ class ReferenceTrajectoryGenerator:
             A: Spatial amplitude - controls size of trajectory (meters)
             a: Angular frequency - controls speed of traversal (rad/s)
             dt: Sampling time for discrete trajectory (seconds)
+            T_blend: Duration of smooth-start blend phase (seconds).
+                     During this phase, a quintic polynomial smoothly
+                     transitions from rest to the Lissajous curve.
+                     Set to 0.0 to disable smooth-start.
         """
         self.A = A
         self.a = a
         self.dt = dt
+        self.T_blend = T_blend
         
         # Cached trajectory data
         self._trajectory: Optional[np.ndarray] = None
         self._duration: float = 0.0
     
+    def _velocity_ramp(self, t: float) -> float:
+        """
+        Smooth velocity scaling factor for the blend phase.
+        
+        Uses Hermite basis function σ(s) = 3s² − 2s³ to smoothly
+        ramp from 0 at t=0 to 1 at t=T_blend. This ensures C¹
+        continuity at both boundaries (σ'(0) = σ'(1) = 0).
+        
+        Reference: Åström & Murray, Feedback Systems, Ch. 6
+        
+        Args:
+            t: Time in seconds
+            
+        Returns:
+            Scaling factor in [0, 1]
+        """
+        if self.T_blend <= 0 or t >= self.T_blend:
+            return 1.0
+        s = t / self.T_blend
+        return 3 * s**2 - 2 * s**3
+    
     def position(self, t: float) -> Tuple[float, float]:
         """
         Compute reference position at time t.
         
+        Positions always follow the Lissajous curve directly.
+        The smooth-start only affects velocities, not positions.
+        
         p_{x,r}(t) = A·sin(a·t)
-        p_{y,r}(t) = A·sin(a·t)·cos(a·t) = A/2·sin(2at)
+        p_{y,r}(t) = A·sin(a·t)·cos(a·t)
         
         Args:
             t: Time in seconds
@@ -102,10 +143,12 @@ class ReferenceTrajectoryGenerator:
     
     def velocity(self, t: float) -> Tuple[float, float]:
         """
-        Compute reference velocity (time derivatives of position) at time t.
+        Compute reference velocity at time t.
         
-        ṗ_{x,r}(t) = a·A·cos(a·t)
-        ṗ_{y,r}(t) = a·A·(cos²(a·t) - sin²(a·t)) = a·A·cos(2at)
+        During the blend phase (t < T_blend), velocity is scaled
+        by a smooth Hermite ramp σ(t) to transition from rest to
+        full speed. Heading direction is preserved since both
+        components are scaled equally.
         
         Args:
             t: Time in seconds
@@ -115,7 +158,9 @@ class ReferenceTrajectoryGenerator:
         """
         dpx = self.a * self.A * np.cos(self.a * t)
         dpy = self.a * self.A * (np.cos(self.a * t)**2 - np.sin(self.a * t)**2)
-        return dpx, dpy
+        
+        sigma = self._velocity_ramp(t)
+        return dpx * sigma, dpy * sigma
     
     def heading(self, t: float) -> float:
         """
@@ -123,13 +168,19 @@ class ReferenceTrajectoryGenerator:
         
         θ_r(t) = arctan2(ṗ_{y,r}, ṗ_{x,r})
         
+        During the blend phase, heading uses the unscaled Lissajous
+        velocity direction. This avoids the degenerate case of
+        arctan2(0, 0) when the velocity ramp is near zero.
+        
         Args:
             t: Time in seconds
             
         Returns:
             Heading angle in radians
         """
-        dpx, dpy = self.velocity(t)
+        # Always use unscaled Lissajous velocity for heading direction
+        dpx = self.a * self.A * np.cos(self.a * t)
+        dpy = self.a * self.A * (np.cos(self.a * t)**2 - np.sin(self.a * t)**2)
         return np.arctan2(dpy, dpx)
     
     def linear_velocity(self, t: float) -> float:

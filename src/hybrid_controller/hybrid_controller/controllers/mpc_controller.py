@@ -57,6 +57,7 @@ class MPCSolution:
     solve_time_ms: float             # Solver time in milliseconds
     slack_used: bool                 # Whether slack variables were activated
     iterations: int                  # Solver iterations (if available)
+    feasibility_margin: float = 0.0  # Max slack magnitude (0 = fully feasible)
 
 
 class MPCController:
@@ -88,6 +89,7 @@ class MPCController:
     
     def __init__(self, horizon: int = 10, 
                  Q_diag: list = None, R_diag: list = None, P_diag: list = None,
+                 S_diag: list = None,
                  d_safe: float = 0.3, slack_penalty: float = 5000.0,
                  v_max: float = 1.0, omega_max: float = 1.5,
                  dt: float = 0.02, solver: str = "OSQP",
@@ -100,6 +102,9 @@ class MPCController:
             Q_diag: State tracking weight diagonal
             R_diag: Control effort weight diagonal
             P_diag: Terminal cost weight diagonal
+            S_diag: Control rate-of-change weight diagonal (Δu penalty).
+                    Penalizes u[k] - u[k-1] to produce smoother control.
+                    Reference: Rawlings et al., Model Predictive Control, Ch. 1.3
             d_safe: Safety distance from obstacles (meters)
             slack_penalty: Penalty weight for constraint slack (rho)
             v_max: Maximum linear velocity (m/s)
@@ -130,10 +135,13 @@ class MPCController:
             R_diag = [0.1, 0.1]
         if P_diag is None:
             P_diag = [20.0, 20.0, 40.0]  # Strong terminal heading weight
+        if S_diag is None:
+            S_diag = [0.1, 0.5]  # Δu penalty: [Δv, Δω] (moderate smoothing)
         
         self.Q = np.diag(Q_diag)
         self.R = np.diag(R_diag)
         self.P = np.diag(P_diag)
+        self.S = np.diag(S_diag)  # Control rate penalty
         
         # Linearizer
         self.linearizer = Linearizer(dt=dt)
@@ -205,11 +213,15 @@ class MPCController:
         # Objective function
         cost = 0
         
-        # Stage costs: Σ (||x_k - x_ref||²_Q + ||u_k||²_R)
+        # Stage costs: Σ (||x_k - x_ref||²_Q + ||u_k||²_R + ||u_k - u_{k-1}||²_S)
         for k in range(self.N):
             state_error = x[k] - x_refs[k]
             cost += cp.quad_form(state_error, self.Q)
             cost += cp.quad_form(u[k], self.R)
+            # Control rate penalty (Δu) for smoother trajectories
+            if k > 0:
+                du_rate = u[k] - u[k - 1]
+                cost += cp.quad_form(du_rate, self.S)
         
         # Terminal cost: ||x_N - x_ref_N||²_P
         terminal_error = x[self.N] - x_refs[self.N]
@@ -407,13 +419,25 @@ class MPCController:
         x0_adjusted = x0.copy()
         x0_adjusted[2] = theta_ref_0 + diff_norm
         
+        # Adaptive weight scheduling: increase heading weight during startup
+        # Reference: MDPI Sensors 2024, adaptive weight MPC
+        Q_active = self.Q.copy()
+        if self._step_count < self._ramp_up_steps:
+            ramp = (self._step_count + 1) / self._ramp_up_steps
+            Q_active[2, 2] *= (2.0 - ramp)  # 2x heading weight at start, decays to 1x
+        
         for k in range(self.N):
-            # Penalize state error (dx)
-            cost += cp.quad_form(dx[k], self.Q)
+            # Penalize state error (dx) with possibly adaptive Q
+            cost += cp.quad_form(dx[k], Q_active)
             
             # Penalize total control effort (u = u_ref + du)
             u_k = u_refs[k] + du_expanded[k]
             cost += cp.quad_form(u_k, self.R)
+            
+            # Control rate penalty (Δu) for smoother trajectories
+            if k > 0:
+                du_rate = du_expanded[k] - du_expanded[k - 1]
+                cost += cp.quad_form(du_rate, self.S)
         
         # Terminal cost
         cost += cp.quad_form(dx[self.N], self.P)
@@ -494,6 +518,9 @@ class MPCController:
         
         if problem.status in [cp.OPTIMAL, cp.OPTIMAL_INACCURATE]:
             slack_used = slack is not None and slack.value is not None and np.any(slack.value > 1e-6)
+            slack_margin = 0.0
+            if slack is not None and slack.value is not None:
+                slack_margin = float(np.max(np.abs(slack.value)))
             
             # Reconstruct absolute states and controls
             dx_val = dx.value
@@ -527,7 +554,8 @@ class MPCController:
                 cost=problem.value,
                 solve_time_ms=solve_time,
                 slack_used=slack_used,
-                iterations=0
+                iterations=0,
+                feasibility_margin=slack_margin
             )
         else:
             return self._get_fallback_solution(x0, x_refs, u_refs, solve_time)

@@ -24,17 +24,21 @@ A ROS2-based implementation of hybrid control combining Linear Quadratic Regulat
 
 ## Overview
 
-This project implements a two-phase control system:
+This project implements a **smooth supervisory hybrid control system** for autonomous differential-drive robots:
 
-| Phase | Controller | Purpose |
-|-------|------------|---------|
-| **Phase 1** | LQR | Trajectory tracking (Figure-8 path) |
-| **Phase 2** | MPC | Obstacle avoidance with safety constraints |
+| Component | Controller | Purpose |
+|-----------|------------|---------|
+| **Trajectory Tracking** | LQR | Low-risk, efficient tracking (DARE-based) |
+| **Obstacle Avoidance** | MPC | High-risk, constraint-aware (CVXPY/OSQP) |
+| **Blending Supervisor** | Sigmoid | Continuous arbitration: `u = w·u_mpc + (1-w)·u_lqr` |
 
 **Key Features:**
 - Differential drive robot model with unicycle kinematics
 - DARE-based LQR with automatic gain computation
-- CVXPY-based MPC with linearized obstacle constraints
+- CVXPY-based MPC with linearized obstacle constraints, Tube MPC, and Δu penalty
+- **Smooth blending** with anti-chatter guarantees (rate-limited sigmoid + hysteresis)
+- **Jerk-aware** control: peak/RMS/p95 jerk metrics logged automatically
+- Risk-based supervisory control with feasibility fallback
 - Comprehensive logging (JSON/CSV export)
 - Standalone simulation (no ROS2 required) + full ROS2 integration
 
@@ -61,11 +65,14 @@ Risk-Aware-Hybrid-LQR-MPC-Navigation-for-Autonomous-Systems/
 │       │   └── linearization.py       # Jacobians, ZOH discretization
 │       ├── controllers/
 │       │   ├── lqr_controller.py      # LQR + DARE solver
-│       │   └── mpc_controller.py      # MPC + CVXPY
+│       │   ├── mpc_controller.py      # MPC + CVXPY/OSQP
+│       │   ├── hybrid_blender.py      # ⭐ Smooth blending supervisor
+│       │   ├── risk_metrics.py        # Risk assessment engine
+│       │   └── yaw_stabilizer.py      # PID heading stabilizer
 │       ├── trajectory/
 │       │   └── reference_generator.py # Figure-8 trajectory
 │       ├── logging/
-│       │   └── simulation_logger.py   # Structured logging
+│       │   └── simulation_logger.py   # Structured logging + jerk metrics
 │       ├── utils/
 │       │   └── visualization.py       # Plotting
 │       └── nodes/
@@ -74,12 +81,15 @@ Risk-Aware-Hybrid-LQR-MPC-Navigation-for-Autonomous-Systems/
 │           ├── mpc_node.py            # MPC controller node
 │           └── state_estimator_node.py
 │
-├── worlds/
-│   ├── empty_world.sdf           # Gazebo world for Phase 1
-│   └── obstacle_world.sdf        # Gazebo world for Phase 2
+├── docs/
+│   └── Code_Review.md                # Full technical documentation
 │
-├── outputs/                      # Generated plots (auto-created)
-└── logs/                         # Simulation logs (auto-created)
+├── worlds/
+│   ├── empty_world.sdf               # Gazebo world for Phase 1
+│   └── obstacle_world.sdf            # Gazebo world for Phase 2
+│
+├── outputs/                           # Generated plots (auto-created)
+└── logs/                              # Simulation logs (auto-created)
 ```
 
 ---
@@ -252,10 +262,35 @@ source install/setup.bash
 python run_simulation.py --mode lqr      # LQR only
 python run_simulation.py --mode mpc      # MPC with obstacles
 python run_simulation.py --mode compare  # Side-by-side comparison
+python run_simulation.py --mode hybrid   # ⭐ Smooth blending hybrid
 
 # Options
-python run_simulation.py --mode mpc --duration 30 --no-plot
+python run_simulation.py --mode hybrid --duration 30 --scenario dense
+python run_simulation.py --mode hybrid --scenario corridor --no-plot
 ```
+
+**Obstacle Scenarios:**
+| Scenario | Description |
+|----------|-------------|
+| `default` | 3 obstacles on Lissajous path |
+| `sparse` | Single obstacle |
+| `dense` | 5 obstacles, tight clearances |
+| `corridor` | Narrow passage configuration |
+
+### Statistical Validation (Monte Carlo)
+
+```bash
+# Compare 4 controllers across 50 randomized obstacle configs
+python evaluation/statistical_runner.py --configs 50
+
+# With noise and latency
+python evaluation/statistical_runner.py --configs 100 --noise 0.01 --delay 2
+
+# Compare specific modes
+python evaluation/statistical_runner.py --configs 50 --modes lqr hybrid
+```
+
+**Output:** `evaluation/results/` (JSON, CSV, per-run CSV)
 
 ### ROS2 Launch (Full Integration)
 
@@ -284,31 +319,41 @@ ros2 launch hybrid_controller lqr_tracking.launch.py use_sim_time:=true
 
 ## Architecture
 
-### Control Flow
+### Smooth Blending Control Flow
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  Trajectory     │────▶│  LQR/MPC         │────▶│  Robot          │
-│  Generator      │     │  Controller      │     │  (Gazebo/Sim)   │
-│  (Figure-8)     │     │                  │     │                 │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
-        │                       ▲                        │
-        │                       │                        │
-        └───────────────────────┴────────────────────────┘
-                         State Feedback
+┌──────────────┐      ┌─────────────┐
+│  Trajectory  │─────▶│    LQR      │───┐
+│  Generator   │      │  Controller │   │ u_lqr
+│  (Figure-8)  │      └─────────────┘   │
+└──────┬───────┘                        ▼
+       │              ┌─────────────┐  ┌─────────────────┐     ┌──────────┐
+       │──────────────│    MPC      │──│    Blending     │────▶│  Robot   │
+       │              │  Controller │  │   Supervisor    │     │  (Sim)   │
+       │              └─────────────┘  │  w(t) sigmoid   │     └────┬─────┘
+       │                   │ u_mpc     │  + hysteresis   │          │
+       │              ┌────┴────┐      │  + rate limit   │          │
+       │              │  Risk   │──────│  + feasibility  │          │
+       └──────────────│ Metrics │      └─────────────────┘          │
+                      └────┬────┘             ▲                    │
+                           │                  │                    │
+                           └──────────────────┴────────────────────┘
+                                       State Feedback
 ```
 
-### Key Parameters (config/params.yaml)
+**Blending Law:** `u = w(t) · u_mpc + (1 - w(t)) · u_lqr`
+
+### Key Parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `dt` | 0.02 | Sampling time (50 Hz) |
-| `A` | 2.0 | Trajectory amplitude |
-| `a` | 0.5 | Trajectory frequency |
-| `Q` | [10, 10, 1] | State error weights |
-| `R` | [0.1, 0.1] | Control effort weights |
-| `N` | 10 | MPC horizon |
+| `k_sigmoid` | 10.0 | Blending steepness |
+| `risk_threshold` | 0.3 | Sigmoid midpoint |
+| `dw_max` | 2.0 | Max weight rate (s⁻¹) |
+| `hysteresis_band` | 0.05 | Deadband half-width |
 | `d_safe` | 0.3 | Safety distance (m) |
+| `S_diag` | [0.1, 0.5] | MPC Δu penalty |
 
 ---
 

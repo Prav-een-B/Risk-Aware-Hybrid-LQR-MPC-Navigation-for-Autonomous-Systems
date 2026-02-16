@@ -399,6 +399,83 @@ class SimulationLogger:
                 is_violation=distance < warning_threshold * 0.5
             )
     
+    def log_hybrid_step(self, timestep: int, blend_weight: float,
+                        risk: float, mode: str,
+                        linear_jerk: float = 0.0,
+                        angular_jerk: float = 0.0) -> None:
+        """
+        Log hybrid blending step with jerk metrics.
+        
+        Args:
+            timestep: Current simulation timestep
+            blend_weight: Blending weight w(t) in [0, 1]
+            risk: Combined risk metric
+            mode: Controller mode ('LQR_DOMINANT', 'BLENDED', 'MPC_DOMINANT')
+            linear_jerk: Linear jerk da/dt (m/s^3)
+            angular_jerk: Angular jerk d(alpha)/dt (rad/s^3)
+        """
+        data = {
+            "timestep": timestep,
+            "blend_weight": float(blend_weight),
+            "risk": float(risk),
+            "mode": mode,
+            "linear_jerk": float(linear_jerk),
+            "angular_jerk": float(angular_jerk)
+        }
+        
+        self._create_entry("DEBUG", "hybrid", LogEventType.CONTROL_ACTION, data)
+    
+    @staticmethod
+    def compute_jerk_metrics(controls: np.ndarray, 
+                             dt: float) -> Dict[str, float]:
+        """
+        Compute jerk statistics from a control sequence.
+        
+        Jerk is the rate of change of acceleration:
+            linear_jerk[k] = (v[k+1] - 2*v[k] + v[k-1]) / dt^2
+            angular_jerk[k] = (omega[k+1] - 2*omega[k] + omega[k-1]) / dt^2
+        
+        Args:
+            controls: Control history array (N, 2) with columns [v, omega]
+            dt: Simulation timestep (seconds)
+            
+        Returns:
+            Dictionary with peak, RMS, and 95th percentile for both
+            linear and angular jerk.
+        """
+        if len(controls) < 3:
+            return {
+                'linear_jerk_peak': 0.0, 'linear_jerk_rms': 0.0,
+                'linear_jerk_p95': 0.0,
+                'angular_jerk_peak': 0.0, 'angular_jerk_rms': 0.0,
+                'angular_jerk_p95': 0.0,
+            }
+        
+        # Second-order finite difference for jerk
+        v = controls[:, 0]
+        omega = controls[:, 1]
+        
+        # Acceleration (first derivative of control)
+        dv = np.diff(v) / dt       # linear acceleration
+        domega = np.diff(omega) / dt  # angular acceleration
+        
+        # Jerk (second derivative of control = first derivative of acceleration)
+        linear_jerk = np.diff(dv) / dt
+        angular_jerk = np.diff(domega) / dt
+        
+        abs_lj = np.abs(linear_jerk)
+        abs_aj = np.abs(angular_jerk)
+        
+        return {
+            'linear_jerk_peak': float(np.max(abs_lj)) if len(abs_lj) > 0 else 0.0,
+            'linear_jerk_rms': float(np.sqrt(np.mean(linear_jerk**2))) if len(linear_jerk) > 0 else 0.0,
+            'linear_jerk_p95': float(np.percentile(abs_lj, 95)) if len(abs_lj) > 0 else 0.0,
+            'angular_jerk_peak': float(np.max(abs_aj)) if len(abs_aj) > 0 else 0.0,
+            'angular_jerk_rms': float(np.sqrt(np.mean(angular_jerk**2))) if len(angular_jerk) > 0 else 0.0,
+            'angular_jerk_p95': float(np.percentile(abs_aj, 95)) if len(abs_aj) > 0 else 0.0,
+        }
+
+    
     def export_to_csv(self, filepath: Optional[str] = None) -> str:
         """
         Export state history to CSV for analysis.

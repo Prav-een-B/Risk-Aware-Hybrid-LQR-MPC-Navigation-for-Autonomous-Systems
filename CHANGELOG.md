@@ -18,6 +18,103 @@ Reference textbooks for theoretical foundations:
 
 ---
 
+## [0.6.1] - 2026-02-16
+
+### Feature: Feasibility Supervisor + Statistical Validation (Phase 2)
+
+**Changes**:
+
+1. **Feasibility Supervisor Enhancement** (`controllers/hybrid_blender.py`):
+   - **Consecutive infeasibility escalation**: `w *= decay^n` for `n` consecutive MPC failures (exponential ramp-down)
+   - **Feasibility margin integration**: High slack usage triggers proportional w reduction (up to 30%)
+   - New parameter: `feasibility_margin_threshold` (default 0.1) controls sensitivity to slack
+   - Consecutive counter only resets when MPC succeeds with low slack
+
+2. **MPCSolution enhancement** (`controllers/mpc_controller.py`):
+   - Added `feasibility_margin: float` field (max slack magnitude from CVXPY solution)
+   - Extracted at solve time for real-time feasibility monitoring
+
+3. **Statistical Validation Framework** (`evaluation/statistical_runner.py` — NEW):
+   - Monte Carlo runner comparing 4 controller modes (LQR, MPC, hard-switch, smooth-blend)
+   - Randomized obstacle configs with minimum spacing and origin avoidance
+   - Noise injection: configurable position/heading Gaussian noise
+   - Control delay simulation: discrete pipeline delay buffer
+   - Per-run + aggregated output in JSON, CSV, per-run CSV
+   - CLI: `python evaluation/statistical_runner.py --configs 100 --noise 0.01 --delay 2`
+
+**Verified**: Hybrid simulation with feasibility_margin (exit 0), statistical runner 3-config smoke test (exit 0).
+
+---
+
+## [0.6.0] - 2026-02-16
+
+### Feature: Smooth Supervisory Hybrid Blending
+
+**Motivation**: The hard LQR/MPC switching architecture caused control discontinuities at mode transitions, producing jerk spikes and degraded tracking. A publishable novel contribution requires formalized continuous blending with theoretical guarantees.
+
+**Changes**:
+
+1. **BlendingSupervisor** (`controllers/hybrid_blender.py` — NEW): 4-stage blending pipeline:
+   - **Sigmoid mapping**: `w_raw = 1 / (1 + exp(-k*(risk - threshold)))` with k=10.0
+   - **Hysteresis deadband**: ±0.05 around threshold prevents oscillation near boundary
+   - **Rate limiting**: `|dw/dt| ≤ 2.0 s⁻¹` guarantees Lipschitz continuity (anti-chatter)
+   - **Feasibility fallback**: w decays by 0.8x when MPC is infeasible or solver time exceeds 5ms
+
+2. **Jerk logging** (`logging/simulation_logger.py`):
+   - `log_hybrid_step()`: records blend weight, risk, mode, and jerk at each timestep
+   - `compute_jerk_metrics()`: static method computing peak, RMS, 95th percentile for linear/angular jerk
+
+3. **Hybrid simulation rewrite** (`run_simulation.py`):
+   - Both LQR and MPC compute controls every step; MPC at 1/5 rate for efficiency
+   - Blended output: `u = w * u_mpc + (1-w) * u_lqr`
+   - 3-panel visualization: blend weight vs risk, control inputs, jerk profile
+
+**Measured Results** (default scenario, 3 obstacles, 20s):
+| Metric | v0.5.0 (hard switch) | v0.6.0 (smooth blend) |
+|--------|---------------------|----------------------|
+| Mean tracking error | 0.100 m | 0.062 m (**−38%**) |
+| Final tracking error | 0.169 m | 0.001 m (**−99%**) |
+| Controller switches | 12 hard | 18 smooth |
+| Linear jerk RMS | — | 644 |
+| Angular jerk RMS | — | 553 |
+
+**Key Design Decisions**:
+- Sigmoid steepness k=10.0 provides gradual transition over ~0.2 risk units (not step-like)
+- Rate limit dw_max=2.0/s means full LQR→MPC transition takes ≥0.5s (smooth by design)
+- 73.1% of simulation time spent in blended region (neither pure LQR nor pure MPC)
+- Convex combination preserves actuator limits without additional constraint checking
+
+**Research Significance**: This is the core novel contribution — continuous control arbitration replaces discrete switching, providing formal anti-chatter guarantees via Lipschitz rate bounding.
+
+---
+
+## [0.5.0] - 2026-02-15
+
+### Feature: Heading Transient Mitigation
+
+**Motivation**: The ~55 degree heading spike at t=0 persisted through previous fixes (yaw stabilizer, cold-start ramp, Tube MPC). Root cause analysis identified two contributing factors: (1) the Lissajous trajectory demands nonzero angular velocity at t=0 when the robot is at rest, and (2) the MPC cost function had no penalty on control rate-of-change.
+
+**Changes**:
+
+1. **Velocity-scaling smooth-start** (`reference_generator.py`): Reference velocities (v, omega) are multiplied by a Hermite ramp sigma(t) = 3s^2 - 2s^3 during the first T_blend=0.5s. The Lissajous positions and heading remain unchanged. Reference: Astrom & Murray, *Feedback Systems*, Ch. 6.
+
+2. **Control rate penalty** (`mpc_controller.py`): Added S matrix (default S_diag=[0.1, 0.5]) penalizing u[k] - u[k-1] in the MPC cost function. This is a standard move suppression technique. Reference: Rawlings et al., *Model Predictive Control*, Ch. 1.3.
+
+3. **Adaptive weight scheduling** (`mpc_controller.py`): During the first 10 steps, Q[2,2] (heading weight) is scaled from 2x down to 1x. This prioritizes heading alignment during startup. Reference: MDPI Sensors 2024.
+
+**Measured Results** (default scenario with obstacles):
+- Heading spike recovery: settled in ~0.5s vs ~2s (v0.4.0). Peak magnitude remains ~55 deg (inherent to Lissajous geometry).
+- Position error peak: 0.8m vs 1.2m (v0.4.0), ~33% reduction
+- Obstacle heading spike: ~30 deg vs ~42 deg (v0.4.0), ~25% reduction
+- Final tracking error: 0.169m
+
+**Key Learnings**:
+- An initial quintic polynomial position-blend approach was attempted and discarded: it introduced an artificial heading ramp (0 to 45 deg) that worsened the spike. The velocity-scaling approach is simpler and preserves the correct heading throughout.
+- Δu penalty weights had to be tuned carefully: S=[0.5, 2.0] made the controller too sluggish, S=[0.1, 0.5] provides a reasonable balance.
+- The residual ~55 deg peak appears to be an inherent property of the Lissajous benchmark (theta(0)=45 deg). Eliminating it entirely would require a different class of trajectory (e.g., straight line start) or a nonlinear MPC formulation.
+
+---
+
 ## [0.4.0] - 2026-02-08
 
 ### Feature: Tube MPC Constraint Tightening
