@@ -276,6 +276,7 @@ python run_simulation.py --mode hybrid --scenario corridor --no-plot
 | `sparse` | Single obstacle |
 | `dense` | 5 obstacles, tight clearances |
 | `corridor` | Narrow passage configuration |
+| `bugtrap` | U-shaped local minima trap |
 
 ### Statistical Validation (Monte Carlo)
 

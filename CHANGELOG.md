@@ -18,6 +18,33 @@ Reference textbooks for theoretical foundations:
 
 ---
 
+## [0.6.2] - 2026-02-16
+
+### Feature: Hardware Realism & Advanced Scenarios (Phase 3 & 4)
+
+**Motivation**: To bridge the sim-to-real gap, we introduced actuator dynamics and tested the system in complex environments designed to stress-test the hybrid architecture.
+
+**Changes**:
+
+1. **Hardware Realism** (`models/actuator_dynamics.py` — NEW):
+   - **Actuator Lag**: First-order dynamics $\tau \dot{u} + u = u_{cmd}$ (simulating motor inertia)
+   - **Control Latency**: Discrete pipeline delay buffer (simulating compute/comms lag)
+   - **Execution Noise**: Gaussian noise on applied controls
+
+2. **Advanced Scenarios** (`evaluation/scenarios.py` — NEW):
+   - **Corridor**: Narrow passage constraint test
+   - **Bug Trap**: Local minima stress test
+   - **Dense Clutter**: High-frequency switching test
+
+**Critical Findings**:
+- **Latency Bottleneck**: MPC solve times (~180ms) exceed the real-time supervision limit (5ms).
+- **Safety Fallback**: The `BlendingSupervisor` correctly identifies this as "high risk" and suppresses MPC usage (w < 0.1), forcing fallback to LQR.
+- **Impact**: System fails gracefully (safety preserved) but performance degrades in complex scenarios (BugTrap collision rate 9.0 vs 1.6 in open fields).
+
+**Next Steps**: Optimization of MPC solver (C-code generation) or horizon reduction to meet <50ms target.
+
+---
+
 ## [0.6.1] - 2026-02-16
 
 ### Feature: Feasibility Supervisor + Statistical Validation (Phase 2)

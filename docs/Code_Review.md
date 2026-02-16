@@ -23,6 +23,7 @@
    - [simulation_logger.py](#51-simulation_loggerpy)
 6. [ROS2 Nodes](#6-ros2-nodes)
 7. [Standalone Simulation](#7-standalone-simulation)
+8. [Advanced Scenarios](#8-advanced-scenarios-new-in-v062)
 
 ---
 
@@ -359,6 +360,34 @@ A_d^{N-1} B_d & A_d^{N-2} B_d & \cdots & B_d
 \end{bmatrix}$$
 
 ---
+
+---
+### 2.3 actuator_dynamics.py (New in v0.6.2)
+
+**Location:** `src/hybrid_controller/hybrid_controller/models/actuator_dynamics.py`
+
+Models physical hardware limitations to bridge the sim-to-real gap.
+
+#### Class: `ActuatorDynamics`
+
+**Mathematical Model:**
+1. **Control Latency (Delay)**: Modeled as a circular buffer of length $d$.
+   $$u_{delayed}[k] = u_{cmd}[k-d]$$
+
+2. **Actuator Lag (First-Order)**:
+   $$\tau \dot{v} + v = v_{cmd}$$
+   Discretized via Euler integration:
+   $$v[k+1] = v[k] + \frac{\Delta t}{\tau} (v_{cmd} - v[k])$$
+
+3. **Execution Noise**:
+   $$u_{applied} = u_{lagged} + \mathcal{N}(0, \sigma^2)$$
+
+**Key Parameters**:
+- `tau_v`, `tau_omega`: Time constants (e.g., 0.1s)
+- `delay_steps`: Number of timesteps delay (e.g., 2 steps = 40ms)
+- `noise_std`: Standard deviation of additive Gaussian noise
+
+--- 
 
 ## 3. Controllers Module
 
@@ -1000,3 +1029,25 @@ python run_simulation.py --mode compare  # Side-by-side comparison
 |------|--------|-------|
 | Kshitiz | [@Erebuzzz](https://github.com/Erebuzzz) | kshitiz23@iiserb.ac.in |
 | Agolika | [@Agolika413](https://github.com/Agolika413) | agolika23@iiserb.ac.in |
+
+---
+
+## 8. Advanced Scenarios (New in v0.6.2)
+
+**Location:** `evaluation/scenarios.py`
+
+Implements procedural generation for stress-testing environments.
+
+### Scenario Generators
+
+#### 1. `CorridorScenario`
+- **Description**: Narrow passage formed by two walls of obstacles.
+- **Purpose**: Tests simultaneous constraint handling from both sides.
+
+#### 2. `BugTrapScenario`
+- **Description**: U-shaped obstacle configuration.
+- **Purpose**: Tests local minima handling. Pure gradient methods fail here; MPC *should* succeed with sufficient horizon, but often fails due to latency constraints in this implementation.
+
+#### 3. `DenseClutterScenario`
+- **Description**: High-density random field (8-15 obstacles).
+- **Purpose**: Stress tests solver speed and switching frequency.
