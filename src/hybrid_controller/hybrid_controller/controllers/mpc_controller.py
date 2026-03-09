@@ -89,7 +89,7 @@ class MPCController:
     
     def __init__(self, horizon: int = 10, 
                  Q_diag: list = None, R_diag: list = None, P_diag: list = None,
-                 S_diag: list = None,
+                 S_diag: list = None, J_diag: list = None,
                  d_safe: float = 0.3, slack_penalty: float = 5000.0,
                  v_max: float = 1.0, omega_max: float = 1.5,
                  dt: float = 0.02, solver: str = "OSQP",
@@ -102,9 +102,13 @@ class MPCController:
             Q_diag: State tracking weight diagonal
             R_diag: Control effort weight diagonal
             P_diag: Terminal cost weight diagonal
-            S_diag: Control rate-of-change weight diagonal (Δu penalty).
+            S_diag: Control rate-of-change weight diagonal (1st-order Δu penalty).
                     Penalizes u[k] - u[k-1] to produce smoother control.
                     Reference: Rawlings et al., Model Predictive Control, Ch. 1.3
+            J_diag: Second-order jerk penalty weight diagonal (optional).
+                    Penalizes u[k] - 2*u[k-1] + u[k-2] (discrete acceleration).
+                    Reduces control jerk for smoother maneuvers.
+                    Set to None to disable. Default: None.
             d_safe: Safety distance from obstacles (meters)
             slack_penalty: Penalty weight for constraint slack (rho)
             v_max: Maximum linear velocity (m/s)
@@ -141,7 +145,13 @@ class MPCController:
         self.Q = np.diag(Q_diag)
         self.R = np.diag(R_diag)
         self.P = np.diag(P_diag)
-        self.S = np.diag(S_diag)  # Control rate penalty
+        self.S = np.diag(S_diag)  # Control rate penalty (1st-order)
+        
+        # Second-order jerk penalty (optional)
+        if J_diag is not None:
+            self.J = np.diag(J_diag)
+        else:
+            self.J = None  # Disabled by default
         
         # Linearizer
         self.linearizer = Linearizer(dt=dt)
@@ -218,10 +228,14 @@ class MPCController:
             state_error = x[k] - x_refs[k]
             cost += cp.quad_form(state_error, self.Q)
             cost += cp.quad_form(u[k], self.R)
-            # Control rate penalty (Δu) for smoother trajectories
+            # Control rate penalty (Δu) for smoother trajectories (1st-order)
             if k > 0:
                 du_rate = u[k] - u[k - 1]
                 cost += cp.quad_form(du_rate, self.S)
+            # Second-order jerk penalty: ||u_k - 2*u_{k-1} + u_{k-2}||^2_J
+            if self.J is not None and k > 1:
+                jerk = u[k] - 2 * u[k - 1] + u[k - 2]
+                cost += cp.quad_form(jerk, self.J)
         
         # Terminal cost: ||x_N - x_ref_N||²_P
         terminal_error = x[self.N] - x_refs[self.N]
@@ -434,10 +448,14 @@ class MPCController:
             u_k = u_refs[k] + du_expanded[k]
             cost += cp.quad_form(u_k, self.R)
             
-            # Control rate penalty (Δu) for smoother trajectories
+            # Control rate penalty (Δu) for smoother trajectories (1st-order)
             if k > 0:
                 du_rate = du_expanded[k] - du_expanded[k - 1]
                 cost += cp.quad_form(du_rate, self.S)
+            # Second-order jerk penalty: ||du_k - 2*du_{k-1} + du_{k-2}||^2_J
+            if self.J is not None and k > 1:
+                jerk = du_expanded[k] - 2 * du_expanded[k - 1] + du_expanded[k - 2]
+                cost += cp.quad_form(jerk, self.J)
         
         # Terminal cost
         cost += cp.quad_form(dx[self.N], self.P)

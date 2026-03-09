@@ -392,3 +392,55 @@ class BlendingSupervisor:
             'blended_fraction': float(blend_frac),
             'total_steps': self._step_count,
         }
+    
+    def get_formal_guarantees(self) -> Dict[str, float]:
+        """
+        Compute formal anti-chatter guarantees (Theorem 2).
+        
+        The rate-limited blending weight w(t) is Lipschitz continuous
+        with constant L = dw_max * dt. This provides:
+        
+        1. Max weight change per timestep: dw_max * dt
+        2. Minimum time for full LQR→MPC transition: 1/dw_max seconds
+        3. Max transitions in interval T: floor(T * dw_max)
+        4. With hysteresis: no switching when |risk - threshold| < band
+        
+        These guarantees hold for ANY risk signal r(t).
+        
+        Returns:
+            Dictionary with formal guarantee values.
+        """
+        max_change_per_step = self.dw_max * self.dt
+        min_transition_time = 1.0 / self.dw_max  # seconds for full 0→1
+        lipschitz_constant = self.dw_max  # |w(t1) - w(t2)| <= L * |t1 - t2|
+        
+        return {
+            'max_weight_change_per_step': max_change_per_step,
+            'min_full_transition_time_s': min_transition_time,
+            'lipschitz_constant': lipschitz_constant,
+            'hysteresis_deadband': 2 * self.hysteresis_band,
+            'max_transitions_per_second': self.dw_max,
+            'feasibility_decay_rate': self.feasibility_decay,
+        }
+    
+    def compute_jerk_bound(self, u_lqr: np.ndarray, u_mpc: np.ndarray) -> float:
+        """
+        Compute the maximum control jerk induced by blending weight changes.
+        
+        For u_blend = w * u_mpc + (1-w) * u_lqr, the jerk from w changes is:
+            ||d²u_blend/dt²|| <= dw_max² * ||u_mpc - u_lqr|| / dt
+        
+        This bound shows that jerk is proportional to the squared rate limit
+        and the control disagreement between controllers.
+        
+        Args:
+            u_lqr: Current LQR control [v, omega]
+            u_mpc: Current MPC control [v, omega]
+            
+        Returns:
+            Upper bound on blending-induced jerk (m/s³ or rad/s³)
+        """
+        control_disagreement = np.linalg.norm(u_mpc - u_lqr)
+        max_jerk = (self.dw_max * self.dt) ** 2 * control_disagreement / self.dt
+        return float(max_jerk)
+

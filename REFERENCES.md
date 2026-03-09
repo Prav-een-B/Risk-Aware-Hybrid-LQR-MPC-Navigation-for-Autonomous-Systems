@@ -92,4 +92,51 @@ Academic references for theoretical foundations and implementation decisions.
 
 ----
 
-*Last updated: 2026-02-16*
+### Real-Time MPC Acceleration (v0.6.2 Literature Review)
+
+| Citation | DOI/Link | Used For |
+|----------|----------|----------|
+| Schaller, M., Banjac, G., Boyd, S. (2022). "Embedded Code Generation with CVXPY." *IEEE Control Systems Letters*, 6:2653-2658. | [stanford.edu](https://web.stanford.edu/~boyd/papers/cvxpygen.html) | CVXPYgen C code generation for 10x MPC speedup |
+| Nguyen, K. et al. (2024). "TinyMPC: Model-Predictive Control on Resource-Constrained Microcontrollers." *ICRA 2024*. | [arxiv.org](https://arxiv.org) | High-speed MPC on ARM Cortex, 100Hz tracking |
+| (2024). "TransformerMPC: Accelerating MPC via Transformer-based Active Constraint Selection." | [arxiv.org](https://arxiv.org) | 35x runtime improvement via learned active-set prediction |
+
+### CBF-MPC Safety Guarantees (v0.6.2 Literature Review)
+
+| Citation | DOI/Link | Used For |
+|----------|----------|----------|
+| Ali, M.A., Shen, C., Hashim, H.A. (2024). "A Linear MPC with Control Barrier Functions for Differential Drive Robots." | [arXiv:2404.09325](https://arxiv.org/abs/2404.09325) | LMPC + CBF for diff-drive obstacle avoidance with stability proof |
+| (2024). "NMPC-CLF-CBF with Relaxed Decay Rate for Nonholonomic Robots." | [arxiv.org](https://arxiv.org) | Relaxed CBF decay for feasibility without sacrificing safety |
+| (2024). "DRCC-MPC for Safe Robot Navigation in Crowds." | [emergentmind.com](https://www.emergentmind.com) | Distributionally robust chance-constrained MPC |
+
+### Hybrid Stability Theory (v0.6.2 Literature Review)
+
+| Citation | DOI/Link | Used For |
+|----------|----------|----------|
+| (2025). "Hybrid Lyapunov and Barrier Function-Based Control." | [arxiv.org](https://arxiv.org) | Unified stability + safety framework |
+| (2024). "Stability of Hybrid Systems in Closed-Loop with MPC." *IMT Lucca*. | [imtlucca.it](https://www.imtlucca.it) | MPC value function as Lyapunov candidate |
+
+----
+
+## APIs & Datasets
+
+| Resource | Access | Used For |
+|----------|--------|----------|
+| arXiv API | [api.arxiv.org](https://info.arxiv.org/help/api/index.html) | Paper search |
+| Elsevier ScienceDirect | API Key: `[REDACTED]` | Journal access |
+| OpenAlex | API Key: `[REDACTED]` | Academic metadata |
+
+----
+
+## Code References
+
+| Library | Version | Used For |
+|---------|---------|----------|
+| CVXPY | ≥1.4 | Convex optimization, MPC formulation |
+| OSQP | ≥0.6 | QP solver, warm-start support |
+| CVXPYgen | ≥0.2 | C code generation for embedded MPC (planned) |
+| NumPy | ≥1.24 | Array operations, linearization |
+| Matplotlib | ≥3.7 | Visualization |
+
+----
+
+*Last updated: 2026-03-09*

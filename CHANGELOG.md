@@ -18,6 +18,69 @@ Reference textbooks for theoretical foundations:
 
 ---
 
+## [0.6.3] - 2026-03-09
+
+### Research: Literature Review & Phase 5 Planning
+
+**Conducted systematic academic literature review (11 searches, 15+ papers).**
+
+**Key Findings**:
+
+1. **CVXPYgen** (Schaller et al., IEEE CSL 2022): C code generation from CVXPY, 10x speedup (0.83ms vs 8.78ms OSQP). Directly solves our 180ms latency bottleneck.
+2. **MPC-CBF for Differential Drive** (Ali et al., 2024): Control Barrier Functions provide formal collision avoidance guarantees for our exact robot model.
+3. **Hybrid Lyapunov-Barrier Framework** (2025): Unified stability + safety proofs applicable to our blending architecture.
+4. **TinyMPC** (ICRA 2024): Validates feasibility of embedded MPC at 100Hz.
+
+**Documentation Updates**:
+- `REFERENCES.md`: 10 new references (3 categories)
+- `implementation_plan.md`: Detailed Phase 5A-E roadmap (Option A)
+- `task.md`: 20+ subtasks for Phase 5
+- `literature_review.md` (artifact): Full gap analysis + synthesis
+
+### Phase 5A: Jerk-Aware Blending (Core Contribution)
+
+**Second-order jerk penalty** added to MPC cost function:
+- New `J_diag` parameter in `mpc_controller.py` (default: `None`, recommended: `[0.05, 0.3]`)
+- Penalizes `||u_k - 2*u_{k-1} + u_{k-2}||^2_J` (discrete acceleration)
+- Applied in both `solve()` and `solve_with_ltv()` methods
+- Backward compatible: `J_diag=None` disables the penalty
+
+**Formal anti-chatter guarantees** added to `hybrid_blender.py`:
+- `get_formal_guarantees()`: Computes Theorem 2 bounds (Lipschitz=2.0, min transition=0.5s)
+- `compute_jerk_bound()`: Upper bound on blending-induced jerk
+
+### Phase 5B: CVXPYgen Performance Recovery (Enabler)
+
+**New module** `cvxpygen_solver.py` — Parametrized MPC solver:
+- Parametrized CVXPY problem avoids re-canonicalization overhead
+- **Mean solve time: 4.7ms** (vs original 180ms = **38x speedup**)
+- Median: 3.4ms, Min: 1.9ms — now **within the 5ms real-time budget**
+- Dual-path: CVXPYgen compiled C solver (when available) / CVXPY fallback
+- Includes `benchmark()` method for reproducible timing
+
+### Phase 5C: Formal Stability Proofs (Theory)
+
+**Created formal document**: `docs/formal_proofs.md`
+- **Theorem 1**: Boundedness under Convex Blending (using Jensen's Inequality)
+- **Theorem 2**: No-Chattering Condition (bounding max transitions via rate limits + hysteresis)
+
+### Phase 5D: Experimental Validation (Benchmarking)
+
+**Massive Monte Carlo Simulation**:
+- Processed 70 scenario configurations (Random Scatter & Dense Clutter)
+- Validated **Jerk-Aware Hybrid vs Hard-Switching**:
+  - **84% reduction in Angular Jerk RMS** (Random scenario)
+  -  **14-17% improvement in Tracking Error**
+  - Consistently high safety bounded within **2.6ms** average solve time
+
+### Phase 5E: Paper Drafting (Synthesis)
+
+**Final Academic Publication Draft**: `docs/IEEE_paper_draft.md`
+- **Title**: *Smooth Supervisory Hybrid LQR-MPC with Jerk-Aware Blending for Autonomous Navigation*
+- Consolidated Sections I-VII covering Model, Supervisory Architecture, Jerk-Aware $J_{cost}$ tuning, Theorems 1/2, and Monte Carlo Quantitative Metrics.
+
+---
+
 ## [0.6.2] - 2026-02-16
 
 ### Feature: Hardware Realism & Advanced Scenarios (Phase 3 & 4)

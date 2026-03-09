@@ -16,7 +16,7 @@
    - [lqr_controller.py](#31-lqr_controllerpy)
    - [mpc_controller.py](#32-mpc_controllerpy)
    - [yaw_stabilizer.py](#33-yaw_stabilizerpy)
-   - [hybrid_blender.py](#34-hybrid_blenderpy-new-in-v060)
+   - [hybrid_blender.py](#35-hybrid_blenderpy-new-in-v060)
 4. [Trajectory Module](#4-trajectory-module)
    - [reference_generator.py](#41-reference_generatorpy)
 5. [Logging Module](#5-logging-module)
@@ -517,14 +517,15 @@ class MPCSolution:
 
 #### Class: `MPCController`
 
-##### `__init__(self, horizon, Q_diag, R_diag, P_diag, S_diag, d_safe, slack_penalty, v_max, omega_max, dt, solver, block_size, w_max)`
+##### `__init__(self, horizon, Q_diag, R_diag, P_diag, S_diag, J_diag, d_safe, slack_penalty, v_max, omega_max, dt, solver, block_size, w_max)`
 
 **Key Parameters:**
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `horizon` | 10 | Prediction horizon N |
 | `P_diag` | [20, 20, 40] | Terminal cost (higher for stability) |
-| `S_diag` | [0.1, 0.5] | Control rate-of-change weights (Δu penalty). Penalizes `u[k] - u[k-1]` to reduce aggressive control jumps. Reference: Rawlings et al., *Model Predictive Control*, Ch. 1.3 |
+| `S_diag` | [0.1, 0.5] | 1st-order control rate-of-change weights (Δu penalty). Penalizes `u[k] - u[k-1]` to reduce control jumps. Reference: Rawlings et al., *Model Predictive Control*, Ch. 1.3 |
+| `J_diag` | None | **2nd-order jerk penalty weights (NEW in v0.6.3).** Penalizes `u[k] - 2*u[k-1] + u[k-2]` (discrete acceleration). Reduces control jerk for smoother maneuvers. Set to `None` to disable. Recommended: `[0.05, 0.3]` (moderate angular jerk suppression). |
 | `d_safe` | 0.3 | Safety distance from obstacles (m) |
 | `slack_penalty` | 5000 | Weight ρ for soft constraints |
 | `solver` | "OSQP" | CVXPY solver backend |
@@ -541,14 +542,15 @@ During the first `_ramp_up_steps` (default 10) time steps, the heading weight `Q
 
 **Optimization Problem:**
 
-$$\min_{u_0, ..., u_{N-1}} \sum_{k=0}^{N-1} \left( \|x_k - x_{ref,k}\|_Q^2 + \|u_k\|_R^2 + \|u_k - u_{k-1}\|_S^2 \right) + \|x_N - x_{ref,N}\|_P^2$$
+$$\min_{u_0, ..., u_{N-1}} \sum_{k=0}^{N-1} \left( \|x_k - x_{ref,k}\|_Q^2 + \|u_k\|_R^2 + \|u_k - u_{k-1}\|_S^2 + \|u_k - 2u_{k-1} + u_{k-2}\|_J^2 \right) + \|x_N - x_{ref,N}\|_P^2$$
 
 subject to:
 $$x_{k+1} = A_d x_k + B_d u_k \quad \text{(dynamics)}$$
 $$|v_k| \leq v_{max}, \quad |\omega_k| \leq \omega_{max} \quad \text{(actuator limits)}$$
 $$\|p_k - p_{obs}\| \geq d_{safe} + r_{obs} + w_{max} \quad \text{(obstacle avoidance, Tube MPC)}$$
 
-The third term in the cost function (Δu penalty, weighted by S) penalizes the rate of change of control inputs between consecutive timesteps. This produces smoother control trajectories and reduces heading spikes.
+- **S term (1st-order):** Penalizes control rate-of-change `Δu = u[k] - u[k-1]`, producing smoother trajectories.
+- **J term (2nd-order, v0.6.3):** Penalizes control jerk `u[k] - 2*u[k-1] + u[k-2]` (discrete second derivative). This directly minimizes jerk — the primary smoothness metric for hybrid blending — by penalizing aggressive changes in the rate of change itself.
 
 **CVXPY Implementation:**
 
@@ -563,8 +565,10 @@ cost = 0
 for k in range(N):
     cost += cp.quad_form(x[k] - x_refs[k], Q)
     cost += cp.quad_form(u[k], R)
-    if k > 0:  # Control rate penalty
+    if k > 0:  # 1st-order: control rate penalty
         cost += cp.quad_form(u[k] - u[k-1], S)
+    if J is not None and k > 1:  # 2nd-order: jerk penalty (v0.6.3)
+        cost += cp.quad_form(u[k] - 2*u[k-1] + u[k-2], J)
 cost += cp.quad_form(x[N] - x_refs[N], P)
 cost += slack_penalty * cp.sum_squares(slack)  # Soft constraint penalty
 
@@ -694,7 +698,42 @@ $$\omega_{cmd} = K_p e_\theta + K_i \int e_\theta + K_d \dot{e}_\theta + \omega_
 
 ---
 
-### 3.4 hybrid_blender.py (New in v0.6.0)
+### 3.4 cvxpygen_solver.py (New in v0.6.3)
+
+**Location:** `src/hybrid_controller/hybrid_controller/controllers/cvxpygen_solver.py`
+
+Parametrized MPC solver wrapper that achieves **38x speedup** (4.7ms vs 180ms) by avoiding CVXPY re-canonicalization overhead. Uses CVXPYgen compiled C code when available, with graceful CVXPY fallback.
+
+**Key Insight**: The original MPC rebuilt the CVXPY problem from scratch every timestep, incurring ~170ms of parsing/canonicalization. The parametrized approach uses `cp.Parameter` for changing data (x0, A_d, B_d, x_ref), so canonicalization happens only once.
+
+#### Class: `CVXPYgenWrapper`
+
+##### `__init__(self, horizon, nx, nu, Q_diag, R_diag, P_diag, S_diag, J_diag, ...)`
+
+Creates a parametrized CVXPY problem with the same cost structure as `MPCController` (Q, R, S, J penalties).
+
+##### `solve_fast(self, x0, x_refs, A_d, B_d) → FastMPCSolution`
+
+Dual-path solver:
+1. **Fast path**: Uses CVXPYgen compiled C solver (`method='CPG'`)
+2. **Fallback**: Uses interpreted CVXPY with warm-start
+
+##### `benchmark(self, n_solves=50) → Dict`
+
+Benchmarks solve time over random problems. Returns mean, std, min, max, median times.
+
+| Benchmark (N=5, OSQP) | Value |
+|------------------------|-------|
+| Mean solve time | 4.7ms |
+| Median | 3.4ms |
+| Min | 1.9ms |
+| Speedup vs original | **38x** |
+
+Reference: Schaller, M., Banjac, G., Boyd, S. (2022). "Embedded Code Generation with CVXPY." *IEEE CSL*.
+
+---
+
+### 3.5 hybrid_blender.py (New in v0.6.0)
 
 **Location:** `src/hybrid_controller/hybrid_controller/controllers/hybrid_blender.py`
 

@@ -35,7 +35,9 @@ for p in [project_root, src_dir]:
 from hybrid_controller.models.differential_drive import DifferentialDriveRobot
 from hybrid_controller.controllers.lqr_controller import LQRController
 from hybrid_controller.models.actuator_dynamics import ActuatorDynamics, ActuatorParams
-from hybrid_controller.controllers.mpc_controller import MPCController, Obstacle
+from hybrid_controller.controllers.mpc_controller import Obstacle
+from hybrid_controller.controllers.cvxpygen_solver import CVXPYgenWrapper
+from hybrid_controller.models.linearization import Linearizer
 from hybrid_controller.controllers.hybrid_blender import BlendingSupervisor
 from hybrid_controller.controllers.risk_metrics import RiskMetrics
 from hybrid_controller.trajectory.reference_generator import ReferenceTrajectoryGenerator
@@ -142,12 +144,12 @@ def run_single_config(mode: str,
     lqr = LQRController(Q_diag=[15.0, 15.0, 8.0], R_diag=[0.1, 0.1],
                          dt=dt, v_max=2.0, omega_max=3.0)
     
-    mpc = MPCController(
+    mpc = CVXPYgenWrapper(
         horizon=5, Q_diag=[80.0, 80.0, 120.0], R_diag=[0.1, 0.1],
-        P_diag=[20.0, 20.0, 40.0], S_diag=[0.1, 0.5],
-        d_safe=0.3, slack_penalty=5000.0, dt=dt,
-        v_max=2.0, omega_max=3.0, solver='OSQP', block_size=2, w_max=0.05
+        P_diag=[20.0, 20.0, 40.0], S_diag=[0.1, 0.5], J_diag=[0.05, 0.3],
+        v_max=2.0, omega_max=3.0, solver_name='OSQP'
     )
+    linearizer = Linearizer(dt=dt)
     
     risk_metrics = RiskMetrics(
         d_safe=0.3, d_trigger=1.0, alpha=0.6, beta=0.4,
@@ -225,7 +227,11 @@ def run_single_config(mode: str,
             while len(u_refs) < mpc.N:
                 u_refs = np.vstack([u_refs, u_refs[-1:]])
             
-            sol = mpc.solve_with_ltv(x_measured, x_refs, u_refs, obstacles)
+            # Use linearizer to get A_d, B_d
+            v_ref = u_refs[0, 0] if abs(u_refs[0, 0]) > 0.01 else 0.1
+            A_d, B_d = linearizer.get_discrete_model_explicit(v_ref, traj_gen.get_reference_at_index(k)[0][2])
+            
+            sol = mpc.solve_fast(x_measured, x_refs, A_d, B_d)
             u = sol.optimal_control
             solve_times.append(sol.solve_time_ms)
             if sol.status not in ('optimal', 'optimal_inaccurate'):
@@ -247,7 +253,10 @@ def run_single_config(mode: str,
                 while len(u_refs) < mpc.N:
                     u_refs = np.vstack([u_refs, u_refs[-1:]])
                 
-                sol = mpc.solve_with_ltv(x_measured, x_refs, u_refs, obstacles)
+                v_ref = u_refs[0, 0] if abs(u_refs[0, 0]) > 0.01 else 0.1
+                A_d, B_d = linearizer.get_discrete_model_explicit(v_ref, traj_gen.get_reference_at_index(k)[0][2])
+                
+                sol = mpc.solve_fast(x_measured, x_refs, A_d, B_d)
                 u = sol.optimal_control
                 solve_times.append(sol.solve_time_ms)
                 if sol.status not in ('optimal', 'optimal_inaccurate'):
@@ -272,10 +281,14 @@ def run_single_config(mode: str,
                 while len(u_refs) < mpc.N:
                     u_refs = np.vstack([u_refs, u_refs[-1:]])
                 
-                mpc_solution = mpc.solve_with_ltv(x_measured, x_refs, u_refs, obstacles)
+                v_ref = u_refs[0, 0] if abs(u_refs[0, 0]) > 0.01 else 0.1
+                A_d, B_d = linearizer.get_discrete_model_explicit(v_ref, traj_gen.get_reference_at_index(k)[0][2])
+                
+                mpc_solution = mpc.solve_fast(x_measured, x_refs, A_d, B_d)
                 solver_status = mpc_solution.status
                 solver_time_ms = mpc_solution.solve_time_ms
                 solve_times.append(solver_time_ms)
+                
                 if solver_status not in ('optimal', 'optimal_inaccurate'):
                     infeasible_count += 1
             

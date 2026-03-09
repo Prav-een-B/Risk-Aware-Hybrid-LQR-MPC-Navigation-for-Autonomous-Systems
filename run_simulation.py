@@ -455,6 +455,7 @@ def run_hybrid_simulation(duration: float = 20.0, dt: float = 0.02,
         R_diag=[0.1, 0.1],
         P_diag=[20.0, 20.0, 40.0],
         S_diag=[0.1, 0.5],
+        J_diag=[0.05, 0.3],     # Second-order jerk penalty (Phase 5A)
         d_safe=0.3,
         slack_penalty=5000.0,
         dt=dt,
