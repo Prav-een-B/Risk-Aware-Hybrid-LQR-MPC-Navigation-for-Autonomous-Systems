@@ -139,4 +139,15 @@ Academic references for theoretical foundations and implementation decisions.
 
 ----
 
-*Last updated: 2026-03-09*
+*Last updated: 2026-03-25*
+
+----
+
+## Key Related Papers (Hybrid LQR-MPC, reviewed March 2026)
+
+| # | Citation | Venue | DOI/Link | Relevance to This Project |
+|---|----------|-------|----------|--------------------------|
+| 1 | Wu et al. (2021). "Composing MPC with LQR and Neural Networks for Amortized Efficiency and Stable Control." | arXiv | arXiv:2112.07238 | **Most directly related.** Same LQR+MPC composing idea; they use a NN as a third mode, we use sigmoid blending. Their Lyapunov stability proof is structurally identical to our Theorem 1. |
+| 2 | Awad et al. (2022). "Model Predictive Control with Fuzzy Logic Switching for Path Tracking of Autonomous Vehicles." | ISA Transactions 129A, pp.193–205 | 10.1016/j.isatra.2021.12.022 | Validates our Phase 3→4 pivot. Fuzzy soft-switching outperforms hard-switching for path tracking — exactly what we found. Our sigmoid blending is a principled version of their fuzzy membership approach. |
+| 3 | Kong et al. (2023). "Hybrid iLQR Model Predictive Control for Contact-Implicit Stabilization on Legged Robots." | IEEE T-RO 39(6), pp.4712–4727 | IEEE T-RO 2023 | Analogous hybrid structure for legged robots (contact/no-contact modes). Their saltation-matrix gradient approach is the algebraic counterpart to our smooth blending. Confirms mode-boundary treatment is the key challenge. |
+| 4 | Le Cleac'h et al. (2024). "Fast Contact-Implicit Model Predictive Control." | IEEE T-RO 40, pp.1617–1629 | 10.1109/TRO.2024.3351554 | Relevant for solver speedup methodology. Exploits QP sparsity structure for real-time CI-MPC — advanced version of our CVXPY parametrisation idea. Relevant if we extend to horizon N≥15. |
