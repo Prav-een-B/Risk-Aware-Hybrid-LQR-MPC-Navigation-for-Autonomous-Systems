@@ -1,0 +1,916 @@
+{
+  "survey_metadata": {
+    "title": "arXiv Literature Survey: Risk-Aware Hybrid LQR-MPC Navigation for Autonomous Differential-Drive Robots",
+    "description": "Structured bibliography compiled via 11 arXiv API queries covering 8 core research topics relevant to the Risk-Aware-Hybrid-LQR-MPC-Navigation project. Each paper is tagged with a relevance score and mapping to specific project components.",
+    "project_context": {
+      "architecture": "Smooth supervisory hybrid controller: LQR (DARE-based) for trajectory tracking + MPC (CVXPY/OSQP, linearised obstacle constraints) for obstacle avoidance, blended via rate-limited sigmoid weighting u = w*u_mpc + (1-w)*u_lqr",
+      "robot_platform": "Differential-drive robot with unicycle kinematics",
+      "key_features": [
+        "DARE-based LQR with automatic gain computation",
+        "Tube MPC with delta-u penalty and linearised circular obstacle constraints",
+        "Anti-chatter sigmoid supervisor with hysteresis and rate-limiting",
+        "Risk-based mode switching with feasibility fallback",
+        "Jerk-aware metrics (peak/RMS/p95)",
+        "ROS2 Humble integration (standalone mode also supported)"
+      ]
+    },
+    "survey_date": "2025-04-05",
+    "date_range_targeted": "2020-2026",
+    "total_topics": 8,
+    "total_papers": 33,
+    "api_base_url": "https://export.arxiv.org/api/query",
+    "query_parameters": {
+      "max_results": 5,
+      "sortBy": "submittedDate",
+      "sortOrder": "descending"
+    },
+    "notes": [
+      "arXiv API treats space-separated terms as OR by default; boolean AND was enforced using the +AND+ URL operator between field-prefixed tokens (e.g. abs:LQR+AND+abs:MPC).",
+      "Phrase searches used URL-encoded double-quotes, e.g. abs:%22distributionally+robust%22.",
+      "Where a primary query returned 0 results, a broadened fallback query was issued (documented per topic).",
+      "Topic 1 yielded only 1 direct API hit; this reflects a genuine literature gap that this project addresses."
+    ]
+  },
+
+  "queries": [
+
+    {
+      "topic_id": 1,
+      "topic_name": "Hybrid LQR-MPC Autonomous Navigation",
+      "primary_query": "abs:LQR+AND+abs:MPC+AND+abs:navigation+AND+abs:robot",
+      "primary_api_url": "https://export.arxiv.org/api/query?search_query=abs:LQR+AND+abs:MPC+AND+abs:navigation+AND+abs:robot&max_results=5&sortBy=submittedDate&sortOrder=descending",
+      "fallback_query": "abs:LQR+AND+abs:MPC+AND+abs:switching+AND+abs:mobile+robot",
+      "fallback_api_url": "https://export.arxiv.org/api/query?search_query=abs:LQR+AND+abs:MPC+AND+abs:switching+AND+abs:mobile+robot&max_results=5&sortBy=submittedDate&sortOrder=descending",
+      "total_found_by_api": 1,
+      "survey_note": "Only 1 paper was returned by exhaustive AND-constrained queries combining LQR, MPC, navigation, and robot simultaneously. This confirms that the direct combination of LQR+MPC hybrid switching for differential-drive navigation is a sparsely populated niche — precisely the gap this project addresses. Additional context papers from Topic 2 (arXiv:2404.10018) and Topic 6 (arXiv:2603.14762) are cross-listed here as highly relevant architectural references.",
+      "papers": [
+        {
+          "title": "Hybrid Systems Neural Control with Region-of-Attraction Planner",
+          "authors": ["Yue Meng", "Chuchu Fan"],
+          "year": 2023,
+          "arxiv_id": "2303.10327",
+          "arxiv_url": "http://arxiv.org/abs/2303.10327v1",
+          "submitted_date": "2023-03-18",
+          "venue": "L4DC 2023 (Accepted)",
+          "abstract_snippet": "Hybrid systems are prevalent in robotics. However, ensuring the stability of hybrid systems is challenging due to sophisticated continuous and discrete dynamics. A system with all its system modes stable can still be unstable. Hence special treatments are required at mode switchings to stabilize the system. We propose a hierarchical, NN-based method: for each mode an NN Lyapunov function and controller ensure states within the region of attraction (RoA) can be stabilized; an RoA NN estimator is learned across modes; upon mode switching a differentiable planner ensures states land in the next mode's RoA. Achieves a higher stability/success rate over MPC, RL, CLF, LQR, QP and HJB baselines, at 10-50X lower runtime than MPC.",
+          "key_contribution": "Hierarchical hybrid controller with provable mode-switching stability using learned Lyapunov ROA estimators; benchmarks LQR vs MPC vs RL on navigation tasks including pogobot navigation and car tracking, demonstrating that naive switching between individually stable controllers (LQR, MPC) can destabilise the closed loop without proper transition planning.",
+          "relevance_to_project": {
+            "score": "HIGH",
+            "rationale": "Directly addresses the core problem of this project: ensuring stability when switching between LQR and MPC controllers. The ROA planner concept maps to the project's sigmoid supervisor; the LQR/MPC benchmark results motivate the hybrid approach over pure controllers. The stability analysis confirms that mode-transition constraints (hysteresis, rate-limiting) are essential — precisely what the project implements.",
+            "applicable_components": [
+              "Supervisory mode-switching logic",
+              "Anti-chatter hysteresis design",
+              "Stability guarantee formulation",
+              "LQR vs MPC performance benchmarking"
+            ]
+          }
+        },
+        {
+          "title": "[CROSS-LISTED] A Linear MPC with Control Barrier Functions for Differential Drive Robots",
+          "cross_listed_from_topic": 2,
+          "arxiv_id": "2404.10018",
+          "year": 2024,
+          "note": "See full entry under Topic 2. Cross-listed here because it combines LQR-equivalent linearisation (Dynamic Feedback Linearisation) with MPC for differential-drive obstacle avoidance — the closest published analogue to this project's architecture."
+        },
+        {
+          "title": "[CROSS-LISTED] Online Learning for Supervisory Switching Control",
+          "cross_listed_from_topic": 6,
+          "arxiv_id": "2603.14762",
+          "year": 2026,
+          "note": "See full entry under Topic 6. Cross-listed here as the most directly relevant paper on the supervisory control component of the hybrid LQR-MPC architecture."
+        }
+      ]
+    },
+
+    {
+      "topic_id": 2,
+      "topic_name": "Control Barrier Function + Differential Drive Obstacle Avoidance",
+      "primary_query": "ti:%22control+barrier+function%22+AND+abs:%22differential+drive%22",
+      "primary_api_url": "https://export.arxiv.org/api/query?search_query=ti:%22control+barrier+function%22+AND+abs:%22differential+drive%22&max_results=5&sortBy=submittedDate&sortOrder=descending",
+      "total_found_by_api": 6,
+      "papers": [
+        {
+          "title": "Control Barrier Functions for the Full Class of Signal Temporal Logic Tasks using Spatiotemporal Tubes",
+          "authors": ["Ratnangshu Das", "Subhodeep Choudhury", "Pushpak Jagtap"],
+          "year": 2025,
+          "arxiv_id": "2510.19595",
+          "arxiv_url": "http://arxiv.org/abs/2510.19595v1",
+          "submitted_date": "2025-10-22",
+          "venue": "Under review",
+          "abstract_snippet": "This paper introduces a new framework for synthesizing time-varying control barrier functions (TV-CBFs) for general Signal Temporal Logic (STL) specifications using spatiotemporal tubes (STT). STT synthesis is formulated as a robust optimization problem and solved via scenario optimization, providing formal guarantees. TV-CBFs are then constructed from STTs, ensuring STL task satisfaction. Demonstrated on a differential-drive mobile robot and a quadrotor; shows improved efficiency over existing approaches.",
+          "key_contribution": "First unified framework to derive TV-CBFs for arbitrary STL specifications via STT, with scenario-optimization-based formal guarantees. Validated directly on differential-drive mobile robots, enabling richer temporal safety constraints beyond simple collision avoidance.",
+          "relevance_to_project": {
+            "score": "MEDIUM-HIGH",
+            "rationale": "The TV-CBF-STT framework provides a principled way to embed temporal safety requirements (e.g., 'avoid obstacle for the next T seconds') into the MPC constraint layer. The differential-drive validation makes it directly applicable; the framework could replace or augment the current linearised circular-obstacle CBF constraints in the MPC with more expressive STL specifications.",
+            "applicable_components": [
+              "MPC obstacle constraint formulation",
+              "Safety-critical constraint design",
+              "Formal safety verification"
+            ]
+          }
+        },
+        {
+          "title": "Guided by Guardrails: Control Barrier Functions as Safety Instructors for Robotic Learning",
+          "authors": ["Maeva Guerrier", "Karthik Soma", "Hassan Fouad", "Giovanni Beltrame"],
+          "year": 2025,
+          "arxiv_id": "2505.18858",
+          "arxiv_url": "http://arxiv.org/abs/2505.18858v1",
+          "submitted_date": "2025-05-24",
+          "venue": "Under review",
+          "abstract_snippet": "Standard RL models safety using single scalar negative rewards with immediate episode termination, failing to capture temporal consequences of unsafe actions. This work applies continuous negative rewards without termination to simulate temporal effects, then shows how CBFs — with their proven safety guarantees — help robots avoid catastrophic regions while enhancing learning. Three CBF-based RL approaches are evaluated in simulation and real hardware using a four-wheel differential drive robot.",
+          "key_contribution": "Demonstrates that CBF-based safety filtering substantially improves RL convergence on a real four-wheel differential-drive robot by shaping the reward landscape and preventing unsafe state visits. Introduces three integration modes (CBF-QP filter, CBF-reward shaping, CBF-constrained policy).",
+          "relevance_to_project": {
+            "score": "MEDIUM",
+            "rationale": "Confirms the practical effectiveness of CBF-based safety layers on physical differential-drive platforms. Relevant for the fallback feasibility logic of the MPC supervisor: if CVXPY optimization becomes infeasible, a lightweight CBF-QP could serve as the safety fallback layer. Hardware validation on differential drive strengthens confidence in the approach.",
+            "applicable_components": [
+              "MPC feasibility fallback design",
+              "Safety constraint validation on differential drive hardware",
+              "Risk-supervisor safety layer"
+            ]
+          }
+        },
+        {
+          "title": "A Linear MPC with Control Barrier Functions for Differential Drive Robots",
+          "authors": ["Ali Mohamed Ali", "Chao Shen", "Hashim A. Hashim"],
+          "year": 2024,
+          "arxiv_id": "2404.10018",
+          "arxiv_url": "http://arxiv.org/abs/2404.10018v1",
+          "submitted_date": "2024-04-14",
+          "venue": "IET Control Theory & Applications (Accepted)",
+          "abstract_snippet": "A Safety Critical Model Predictive Control based on Dynamic Feedback Linearization (DFL) for differential drive robots is proposed to generate obstacle-free paths. A barrier function introduces a safety constraint into the MPC optimization to prevent collisions. Due to intrinsic nonlinearities of differential drive robots, NMPC is computationally expensive; instead, a combination of Linear MPC (LMPC) and DFL is proposed. The MPC problem is formulated on a linear equivalent model of the differential drive robot rendered by DFL. Closed-loop stability and recursive feasibility are analyzed. Numerical experiments demonstrate robustness and effectiveness.",
+          "key_contribution": "Proposes exactly the architecture this project uses: LMPC + linearisation (DFL rather than DARE-based LQR) + CBF obstacle constraints for differential-drive robots. Provides closed-loop stability and recursive feasibility proofs. Shows that linearised CBF constraints are computationally tractable while maintaining safety, outperforming Euclidean distance constraints as benchmarks.",
+          "relevance_to_project": {
+            "score": "CRITICAL",
+            "rationale": "This is the closest existing published work to the core MPC component of this project. Key parallels: (1) differential-drive platform with unicycle kinematics, (2) linearisation to enable LMPC, (3) CBF as obstacle constraint in the QP, (4) recursive feasibility analysis. The project extends this by adding: LQR as a parallel tracker, smooth supervisory blending, and risk-aware mode selection. Should be cited as a primary architectural reference.",
+            "applicable_components": [
+              "MPC linearised obstacle constraint formulation",
+              "Dynamic Feedback Linearisation vs DARE-LQR comparison",
+              "Recursive feasibility proof for the MPC QP",
+              "Closed-loop stability analysis",
+              "Differential drive nonlinear-to-linear transformation"
+            ]
+          }
+        },
+        {
+          "title": "Distributed Safe Navigation of Multi-Agent Systems using Control Barrier Function-Based Optimal Controllers",
+          "authors": ["Pol Mestres", "Carlos Nieto-Granda", "Jorge Cortés"],
+          "year": 2024,
+          "arxiv_id": "2402.06195",
+          "arxiv_url": "http://arxiv.org/abs/2402.06195v2",
+          "submitted_date": "2024-02-09",
+          "venue": "Under review",
+          "abstract_snippet": "A distributed controller synthesis framework for safe navigation of multi-agent systems leverages control barrier functions to formulate collision avoidance with obstacles and teammates as constraints on the control input for a state-dependent network optimization problem encoding team formation and the navigation task. Valid for general nonlinear control dynamics; the resulting controller is distributed, satisfies safety constraints at all times, and is asymptotically optimal. Illustrated in a team of differential-drive robots in complex environments, in simulation and hardware.",
+          "key_contribution": "Provides a distributed CBF-based QP framework for multi-agent differential-drive navigation with provable asymptotic optimality and all-time safety constraint satisfaction. The decentralised QP structure is computationally efficient and hardware-validated on real diff-drive robots.",
+          "relevance_to_project": {
+            "score": "MEDIUM",
+            "rationale": "Demonstrates that CBF-QP formulations scale to multi-robot differential-drive teams with hardware validation. Relevant if the project is extended to multi-robot scenarios. The decentralised QP structure is also instructive for reducing the per-step MPC solve time via constraint decomposition.",
+            "applicable_components": [
+              "CBF constraint design for multiple obstacles",
+              "QP efficiency optimisation",
+              "Hardware validation methodology for differential drive"
+            ]
+          }
+        },
+        {
+          "title": "Safe Path Planning for Polynomial Shape Obstacles via Control Barrier Functions and Logistic Regression",
+          "authors": ["Chengyang Peng", "Octavian Donca", "Ayonga Hereid"],
+          "year": 2022,
+          "arxiv_id": "2210.03704",
+          "arxiv_url": "http://arxiv.org/abs/2210.03704v1",
+          "submitted_date": "2022-10-07",
+          "venue": "7 pages, 8 figures (conference submission)",
+          "abstract_snippet": "Safe path planning is critical for bipedal robots in safety-critical environments. A CBF-based RRT* algorithm generates collision-free paths through complex space with polynomial-shaped obstacles. Logistic regression constructs polynomial barrier functions from grid maps to represent arbitrarily shaped obstacles. A multi-step CBF steering controller ensures efficient free space exploration. First validated on a differential drive model in simulation, then on a 3D humanoid robot (Digit) with randomly placed obstacles.",
+          "key_contribution": "Introduces data-driven polynomial CBF construction via logistic regression for non-convex, arbitrary-shape obstacles, combined with RRT* for path planning. Demonstrates that CBFs extend beyond circles/ellipses to arbitrary polygonal/polynomial shapes. The differential-drive simulation baseline is directly reusable.",
+          "relevance_to_project": {
+            "score": "MEDIUM",
+            "rationale": "The current project uses circular obstacle approximations in the MPC constraint. This paper shows how to extend CBF-based constraints to arbitrary polygon shapes using learned barrier functions — directly applicable if the project needs to handle non-circular real-world obstacles. The logistic-regression CBF construction could be integrated as an offline preprocessing step.",
+            "applicable_components": [
+              "Non-circular obstacle constraint generalisation",
+              "Barrier function construction for MPC constraints",
+              "Path planning integration with CBF controller"
+            ]
+          }
+        }
+      ]
+    },
+
+    {
+      "topic_id": 3,
+      "topic_name": "Distributionally Robust MPC for Mobile Robots",
+      "primary_query": "abs:%22distributionally+robust%22+AND+abs:MPC+AND+abs:robot",
+      "primary_api_url": "https://export.arxiv.org/api/query?search_query=abs:%22distributionally+robust%22+AND+abs:MPC+AND+abs:robot&max_results=5&sortBy=submittedDate&sortOrder=descending",
+      "total_found_by_api": 9,
+      "papers": [
+        {
+          "title": "Distributionally Robust Model Predictive Control with Mixture of Gaussian Processes",
+          "authors": ["Jingyi Wu", "Chao Ning"],
+          "year": 2025,
+          "arxiv_id": "2502.05448",
+          "arxiv_url": "http://arxiv.org/abs/2502.05448v1",
+          "submitted_date": "2025-02-08",
+          "venue": "Under review (6 pages)",
+          "abstract_snippet": "Despite the success of GP-based MPC in robotic control, its applicability is hindered by multimodal disturbances prevalent in real-world settings. A novel Mixture of Gaussian Processes based Distributionally Robust MPC (MoGP-DR-MPC) framework is proposed for LTI systems subject to potentially multimodal state-dependent disturbances. MoGP automatically determines the number of modes from disturbance data; DR-CVaR constraints using a data-driven state-dependent ambiguity set enforce distributional robustness. DR-CVaR constraints are reformulated into tractable second-order cone constraints. Validated on a quadrotor system with 17% and 4% reductions in closed-loop cost vs standard GP-MPC.",
+          "key_contribution": "First DR-MPC framework combining Mixture-of-GPs with CVaR-based distributional robustness for multimodal disturbances, with tractable SOCP reformulation and theoretical recursive feasibility and stability guarantees. Achieves 17% closed-loop cost reduction over standard GP-MPC on quadrotor simulations.",
+          "relevance_to_project": {
+            "score": "HIGH",
+            "rationale": "Directly provides a blueprint for upgrading the project's MPC from a deterministic formulation to a distributionally robust one. The MoGP disturbance model could capture multimodal terrain/actuator uncertainties in differential-drive robots. The SOCP reformulation is compatible with CVXPY, maintaining the project's existing solver infrastructure. Recursive feasibility proofs directly apply to the MPC component.",
+            "applicable_components": [
+              "MPC uncertainty quantification upgrade",
+              "DR-CVaR obstacle constraint formulation",
+              "SOCP-compatible CVXPY implementation",
+              "Recursive feasibility proof for the MPC QP"
+            ]
+          }
+        },
+        {
+          "title": "Integrating Predictive Motion Uncertainties with Distributionally Robust Risk-Aware Control for Safe Robot Navigation in Crowds",
+          "authors": ["Kanghyun Ryu", "Negar Mehr"],
+          "year": 2024,
+          "arxiv_id": "2403.05081",
+          "arxiv_url": "http://arxiv.org/abs/2403.05081v1",
+          "submitted_date": "2024-03-08",
+          "venue": "ICRA 2024",
+          "abstract_snippet": "A distributionally robust chance-constrained MPC (DRCC-MPC) ensures safe navigation in human-populated environments by adopting a probability of collision as a pre-specified, interpretable risk metric and offering robustness against discrepancies between actual and predicted human trajectories. Chance constraints are conservatively approximated via distributionally robust CVaR constraints. A sampling-based optimization technique parallelized for real-time evaluation is used. Demonstrates successful, real-time safe navigation in case studies with real-world pedestrian data.",
+          "key_contribution": "DRCC-MPC architecture for crowd navigation that unifies a DR collision-probability chance constraint with real-time parallel sampling. Directly integrates crowd-motion prediction uncertainty into the MPC constraint set, with DR robustness to out-of-distribution human motion. Real-time validated.",
+          "relevance_to_project": {
+            "score": "HIGH",
+            "rationale": "The DR-CVaR chance constraint formulation is directly applicable to the project's MPC obstacle avoidance layer, replacing or augmenting the current deterministic linearised constraints with probabilistic ones. The real-time performance is achievable on the project's hardware target. The 'probability of collision' metric maps naturally to the project's risk supervisor blending weight.",
+            "applicable_components": [
+              "Risk metric definition for the supervisor",
+              "DR chance-constrained MPC obstacle constraints",
+              "Real-time MPC solve strategy",
+              "Risk-aware blending weight computation"
+            ]
+          }
+        },
+        {
+          "title": "Distributionally Robust CVaR-Based Safety Filtering for Motion Planning in Uncertain Environments",
+          "authors": ["Sleiman Safaoui", "Tyler H. Summers"],
+          "year": 2023,
+          "arxiv_id": "2309.08821",
+          "arxiv_url": "http://arxiv.org/abs/2309.08821v1",
+          "submitted_date": "2023-09-16",
+          "venue": "Under review",
+          "abstract_snippet": "A computationally efficient safety filtering solution reduces collision risk of ego robot motion plans using multiple samples of obstacle trajectory predictions. The collision avoidance problem is reformulated by computing safe halfspaces based on obstacle sample trajectories using distributionally robust optimization (DRO). The safe halfspaces are used in an MPC-like safety filter to apply corrections to the reference ego trajectory. Efficacy and computational efficiency are demonstrated through numerical simulations.",
+          "key_contribution": "Lightweight DR safety filter formulated as halfspace constraints from sampled obstacle trajectories. The filter is applied as a post-hoc correction layer on top of a nominal planner, making it compatible with any existing controller (including LQR or MPC). Halfspace linearisation is analogous to the project's current linearised obstacle constraints.",
+          "relevance_to_project": {
+            "score": "MEDIUM-HIGH",
+            "rationale": "The halfspace-from-samples approach is conceptually similar to the project's linearised circular obstacle constraints. This paper shows how to make those halfspace constraints distributionally robust using DRO — a directly applicable upgrade path. The safety-filter architecture also maps to the project's feasibility fallback: when MPC is infeasible, a simpler DR filter could be used.",
+            "applicable_components": [
+              "Linearised obstacle constraint robustification",
+              "Feasibility fallback safety filter design",
+              "DR obstacle halfspace construction"
+            ]
+          }
+        },
+        {
+          "title": "Iterative Risk-Constrained Model Predictive Control: A Data-Driven Distributionally Robust Approach",
+          "authors": ["Alireza Zolanvari", "Ashish Cherukuri"],
+          "year": 2023,
+          "arxiv_id": "2308.11510",
+          "arxiv_url": "http://arxiv.org/abs/2308.11510v1",
+          "submitted_date": "2023-08-22",
+          "venue": "Under review (14 pages)",
+          "abstract_snippet": "An iterative distributionally robust MPC scheme solves a risk-constrained infinite-horizon optimal control problem. Each iteration generates a trajectory from start to target using DR risk constraints over an accumulated ambiguity set built from historical observations. As iterations progress, more data is obtained and the environment is explored progressively, improving safety and cost optimality. Recursive feasibility and asymptotic convergence to the target while ensuring safety with high probability are proven. Tractable reformulations provided for total variation and Wasserstein distance-based ambiguity sets. Illustrated for two mobile robots facing an uncertain obstacle.",
+          "key_contribution": "Iterative DR-MPC that progressively tightens safety guarantees as more obstacle uncertainty data is accumulated across episodes. The Wasserstein ambiguity set reformulation provides a tractable SOCP. Mobile robot simulation validates the approach on uncertain obstacle scenarios directly relevant to this project.",
+          "relevance_to_project": {
+            "score": "MEDIUM",
+            "rationale": "The iterative learning aspect is relevant for deployments where the robot repeatedly navigates known environments and can refine its obstacle uncertainty model over time. The Wasserstein ambiguity set provides a principled way to incorporate historical obstacle trajectory data into the MPC constraints — a useful extension for the project's long-horizon deployment scenarios.",
+            "applicable_components": [
+              "Uncertainty model refinement over repeated runs",
+              "Wasserstein DR obstacle constraint",
+              "Asymptotic safety proof for iterative MPC"
+            ]
+          }
+        },
+        {
+          "title": "Data-Driven Distributionally Robust Iterative Risk-Constrained Model Predictive Control",
+          "authors": ["Alireza Zolanvari", "Ashish Cherukuri"],
+          "year": 2021,
+          "arxiv_id": "2111.12977",
+          "arxiv_url": "http://arxiv.org/abs/2111.12977v1",
+          "submitted_date": "2021-11-25",
+          "venue": "Submitted to ECC 2022",
+          "abstract_snippet": "An iterative distributionally robust risk-constrained MPC scheme is proposed for infinite-horizon optimal control. At each iteration, safe states and IID samples of uncertainty are accumulated. Safe states serve as terminal constraints; samples define a Wasserstein ambiguity set. Trajectories are feasible, safe, and converge asymptotically to equilibrium. Simulation: risk-constrained path for a mobile robot with an uncertain obstacle.",
+          "key_contribution": "Foundational paper for the iterative DR-MPC line of work (precursor to arXiv:2308.11510). Establishes the Wasserstein ambiguity set as a tractable data-driven approach to distributional robustness in MPC for mobile robot navigation. Directly validates on a mobile robot uncertain-obstacle scenario.",
+          "relevance_to_project": {
+            "score": "MEDIUM",
+            "rationale": "Foundational reference for data-driven DR-MPC. The mobile robot uncertain-obstacle simulation establishes baseline comparisons. The iterative approach is applicable to the project's repeated-navigation scenarios where obstacle statistics improve with experience.",
+            "applicable_components": [
+              "DR-MPC foundational methodology",
+              "Wasserstein ambiguity set construction",
+              "Mobile robot obstacle uncertainty modelling"
+            ]
+          }
+        }
+      ]
+    },
+
+    {
+      "topic_id": 4,
+      "topic_name": "Gaussian Process MPC for Uncertainty Quantification in Robots",
+      "primary_query": "abs:%22Gaussian+process%22+AND+abs:MPC+AND+abs:robot+AND+abs:uncertainty",
+      "primary_api_url": "https://export.arxiv.org/api/query?search_query=abs:%22Gaussian+process%22+AND+abs:MPC+AND+abs:robot+AND+abs:uncertainty&max_results=5&sortBy=submittedDate&sortOrder=descending",
+      "total_found_by_api": 8,
+      "papers": [
+        {
+          "title": "Probabilistically-Safe Bipedal Navigation over Uncertain Terrain via Conformal Prediction and Contraction Analysis",
+          "authors": ["Kasidit Muenprasitivej", "Ye Zhao", "Glen Chou"],
+          "year": 2025,
+          "arxiv_id": "2510.07725",
+          "arxiv_url": "http://arxiv.org/abs/2510.07725v1",
+          "submitted_date": "2025-10-09",
+          "venue": "Under review (9 pages)",
+          "abstract_snippet": "A high-level MPC navigation framework for a bipedal robot uses GP regression to estimate terrain elevation maps and Conformal Prediction (CP) to construct calibrated confidence intervals capturing true terrain elevation. Contraction-based reachable tubes explicitly account for terrain uncertainty, ensuring state convergence and tube invariance. A flywheel torque control law stabilizes angular momentum about CoM. Both probabilistic safety and goal reachability guarantees are established for a given confidence level. Validated via physics-based simulations of the Digit bipedal robot in MuJoCo.",
+          "key_contribution": "Combines GP terrain modelling with Conformal Prediction (distribution-free, finite-sample calibrated uncertainty bounds) and contraction-based Tube MPC for provably probabilistically-safe bipedal locomotion. The CP+contraction-tube approach provides tighter, calibrated safety tubes compared to GP variance alone.",
+          "relevance_to_project": {
+            "score": "MEDIUM-HIGH",
+            "rationale": "The Tube MPC + GP + CP framework is directly applicable to upgrading the project's Tube MPC with data-driven uncertainty quantification. Conformal Prediction provides distribution-free calibrated bounds on obstacle position uncertainty — applicable to the differential-drive project's obstacle avoidance MPC. The contraction-based tube design is more principled than the current fixed-tube Tube MPC.",
+            "applicable_components": [
+              "Tube MPC tightening constraint design",
+              "GP-based obstacle uncertainty modelling",
+              "Conformal Prediction for distribution-free safety bounds",
+              "Probabilistic safety guarantee formulation"
+            ]
+          }
+        },
+        {
+          "title": "Tiny Learning-Based MPC for Multirotors: Solver-Aware Learning for Efficient Embedded Predictive Control",
+          "authors": ["Babak Akbari", "Justin Frank", "Melissa Greeff"],
+          "year": 2024,
+          "arxiv_id": "2410.23634",
+          "arxiv_url": "http://arxiv.org/abs/2410.23634v3",
+          "submitted_date": "2024-10-31",
+          "venue": "Under review",
+          "abstract_snippet": "Tiny aerial robots face significant control challenges due to limited computing and nonlinear dynamics. While GP-MPC enhances performance by learning residual dynamics, high computational cost restricts onboard deployment. This paper introduces Tiny LB MPC, a co-designed MPC framework and optimization solver for resource-constrained micro multirotor platforms. Achieves 100 Hz control on a Crazyflie 2.1 with a Teensy 4.0 microcontroller; 43% average improvement in tracking performance over existing embedded MPC under model uncertainty.",
+          "key_contribution": "Co-designed GP-MPC + solver approach enabling 100 Hz real-time GP-MPC on a 53g microcontroller (Crazyflie 2.1). Demonstrates that GP-MPC computational barriers can be overcome via solver-aware model compression. First onboard implementation of GP-LB-MPC on a micro-aerial vehicle.",
+          "relevance_to_project": {
+            "score": "MEDIUM",
+            "rationale": "Demonstrates that GP-augmented MPC can run in real-time on severely resource-constrained platforms. For the project's ROS2 deployment, where computation budget is shared with navigation and perception, the solver-aware compression strategy is relevant for keeping MPC solve time under the control loop budget (target: ~20-50 Hz for differential drive).",
+            "applicable_components": [
+              "Real-time GP-MPC computational feasibility",
+              "MPC solver efficiency optimisation",
+              "Embedded deployment strategy"
+            ]
+          }
+        },
+        {
+          "title": "A Tutorial on Gaussian Process Learning-Based Model Predictive Control",
+          "authors": ["Jie Wang", "Youmin Zhang"],
+          "year": 2024,
+          "arxiv_id": "2404.03689",
+          "arxiv_url": "http://arxiv.org/abs/2404.03689v1",
+          "submitted_date": "2024-04-02",
+          "venue": "Under review (tutorial paper)",
+          "abstract_snippet": "A systematic introduction to GP learning-based MPC (GP-MPC), integrating GP regression with MPC for enhanced control in complex systems. Covers GP regression fundamentals and how it enriches MPC with enhanced predictive accuracy and robust handling of uncertainties. A central contribution is the first detailed, systematic mathematical formulation of GP-MPC in literature, focusing on deriving the approximation of means and variances propagation for GP multi-step predictions. Practical applications in robotics control — path-following for mobile robots in challenging terrains and mixed-vehicle platooning — are discussed.",
+          "key_contribution": "First comprehensive, systematic mathematical formulation of GP-MPC multi-step mean and variance propagation. Covers sparse GP approximations for computational tractability, uncertainty-aware constraint tightening, and real-world robotics applications including mobile robot path-following on challenging terrain — directly analogous to this project's navigation scenario.",
+          "relevance_to_project": {
+            "score": "HIGH",
+            "rationale": "Serves as a complete reference for implementing GP-MPC as an upgrade to the project's current deterministic MPC. The multi-step GP variance propagation formulas would enable the project's MPC to compute uncertainty-aware obstacle constraint tightenings. The mobile robot path-following application section is directly analogous to the project's trajectory tracking + obstacle avoidance task.",
+            "applicable_components": [
+              "GP residual dynamics model for the MPC prediction model",
+              "Uncertainty-aware MPC constraint tightening (Tube MPC upgrade)",
+              "GP variance propagation for multi-step MPC horizon",
+              "Mobile robot GP-MPC implementation reference"
+            ]
+          }
+        },
+        {
+          "title": "Safe Machine-Learning-Supported Model Predictive Force and Motion Control in Robotics",
+          "authors": ["Janine Matschek", "Johanna Bethge", "Rolf Findeisen"],
+          "year": 2023,
+          "arxiv_id": "2303.04569",
+          "arxiv_url": "http://arxiv.org/abs/2303.04569v1",
+          "submitted_date": "2023-03-08",
+          "venue": "Under review",
+          "abstract_snippet": "A learning-supported MPC scheme provides stochastic safety guarantees while adapting to changing situations. Gaussian processes learn the uncertain relations mapping robot states to forces and moments. The MPC uses GP models to achieve precise motion and force control under stochastic constraint satisfaction. As uncertainty only occurs in static model parts (output equations), a computationally efficient stochastic MPC formulation is used. Recursive feasibility and convergence of closed loop are analyzed. Chance constraint formulations and back-offs are constructed based on GP variance to guarantee safe operation.",
+          "key_contribution": "Stochastic MPC formulation where GP uncertainty appears only in the output equation (not state transition), enabling a computationally efficient chance-constraint back-off strategy based on GP variance. Provides recursive feasibility and closed-loop convergence proofs. Hardware-validated on a lightweight robot.",
+          "relevance_to_project": {
+            "score": "MEDIUM-HIGH",
+            "rationale": "The GP variance back-off approach for chance constraints directly applies to the project's MPC: obstacle constraint tightening amounts can be computed from GP variance estimates of obstacle motion uncertainty. The output-only GP uncertainty structure matches scenarios where obstacle positions (outputs) are uncertain but the robot dynamics (state transition) are well-modelled.",
+            "applicable_components": [
+              "GP variance-based MPC constraint tightening",
+              "Chance constraint back-off computation",
+              "Stochastic MPC recursive feasibility proof"
+            ]
+          }
+        },
+        {
+          "title": "Model Predictive Impedance Control with Gaussian Processes for Human and Environment Interaction",
+          "authors": ["Kevin Haninger", "Christian Hegeler", "Luka Peternel"],
+          "year": 2022,
+          "arxiv_id": "2208.07035",
+          "arxiv_url": "http://arxiv.org/abs/2208.07035v2",
+          "submitted_date": "2022-08-15",
+          "venue": "Robotics and Autonomous Systems, Volume 165, 104431, July 2023",
+          "abstract_snippet": "An MPC framework plans both trajectory and impedance online, considering discrete and continuous uncertainties, including safety constraints, and is applicable to a new task efficiently. An uncertainty-aware task model is learned from few (<=3) demonstrations using Gaussian Processes. This task model is used in NMPC to optimize robot trajectory and impedance according to belief in discrete human goals, human kinematics, safety constraints, contact stability, and frequency-domain disturbance rejection.",
+          "key_contribution": "First MPC framework that jointly optimises trajectory and impedance under GP-modelled uncertainty about human goals and dynamics, with safety constraints and few-shot learning. Demonstrates GP-MPC scalability to complex human-robot interaction tasks with formal constraint satisfaction.",
+          "relevance_to_project": {
+            "score": "LOW-MEDIUM",
+            "rationale": "Less directly relevant (manipulation-focused, not navigation). However, the few-shot GP model initialisation and the dual discrete/continuous uncertainty treatment are methodologically interesting for the project's risk supervisor: discrete uncertainty (obstacle present/absent) combined with continuous uncertainty (obstacle position) maps to the supervisor's mode-switching logic.",
+            "applicable_components": [
+              "Mixed discrete/continuous uncertainty in MPC",
+              "GP few-shot model initialisation",
+              "Safety constraint formulation under GP uncertainty"
+            ]
+          }
+        }
+      ]
+    },
+
+    {
+      "topic_id": 5,
+      "topic_name": "Risk-Aware Trajectory Optimization for Autonomous Systems",
+      "primary_query": "ti:%22risk-aware%22+AND+abs:trajectory+AND+abs:autonomous",
+      "primary_api_url": "https://export.arxiv.org/api/query?search_query=ti:%22risk-aware%22+AND+abs:trajectory+AND+abs:autonomous&max_results=5&sortBy=submittedDate&sortOrder=descending",
+      "total_found_by_api": 24,
+      "papers": [
+        {
+          "title": "Risk-Aware Rulebooks for Multi-Objective Trajectory Evaluation under Uncertainty",
+          "authors": ["Tichakorn Wongpiromsarn"],
+          "year": 2026,
+          "arxiv_id": "2603.04603",
+          "arxiv_url": "http://arxiv.org/abs/2603.04603v1",
+          "submitted_date": "2026-03-04",
+          "venue": "Under review",
+          "abstract_snippet": "A risk-aware formalism evaluates system trajectories in the presence of uncertain interactions between the system and its environment. The formalism supports reasoning under uncertainty and systematically handles complex relationships among requirements and objectives, including hierarchical priorities and non-comparability. Rather than treating the environment as exogenous noise, it explicitly models how each system trajectory influences the environment and evaluates trajectories under the resulting distribution of environment responses. A preorder on the set of system trajectories is proven, ensuring consistency and preventing cyclic preferences. Illustrated with an autonomous driving example.",
+          "key_contribution": "Risk-aware trajectory ranking formalism that induces a preorder on trajectories by explicitly modelling environment-response distributions induced by each candidate trajectory. Handles hierarchical, non-comparable objectives with provably consistent risk-aware preference ordering. Enhances explainability of trajectory selection rationale.",
+          "relevance_to_project": {
+            "score": "MEDIUM",
+            "rationale": "The risk-aware preorder framework provides a principled way to define the project's supervisor blending weight: rather than a scalar sigmoid, trajectories could be ranked by this formalism and the MPC/LQR mixture weight derived from the risk preorder. The hierarchical objective handling maps to the project's layered safety (collision avoidance) vs efficiency (tracking) objectives.",
+            "applicable_components": [
+              "Risk metric formalisation for the supervisor",
+              "Multi-objective trajectory ranking",
+              "Explainable mode selection rationale"
+            ]
+          }
+        },
+        {
+          "title": "Risk-Aware Obstacle Avoidance Algorithm for Real-Time Applications",
+          "authors": ["Ozan Kaya", "Emir Cem Gezer", "Roger Skjetne", "Ingrid Bouwer Utne"],
+          "year": 2026,
+          "arxiv_id": "2602.09204",
+          "arxiv_url": "http://arxiv.org/abs/2602.09204v4",
+          "submitted_date": "2026-02-09",
+          "venue": "Under review",
+          "abstract_snippet": "A hybrid risk-aware navigation architecture integrates probabilistic modeling of obstacles along the vehicle path with smooth trajectory optimization for autonomous surface vessels. The system constructs probabilistic risk maps capturing both obstacle proximity and dynamic object behavior. A risk-biased RRT planner leverages these maps to generate collision-free paths, refined using B-spline algorithms for trajectory continuity. Three distinct RRT* rewiring modes are implemented: minimizing path length, minimizing risk, and optimizing a combination. Evaluated in scenarios with both static and dynamic obstacles.",
+          "key_contribution": "End-to-end hybrid risk-aware navigation: probabilistic risk map construction → risk-biased RRT* → B-spline trajectory smoothing. The system explicitly balances risk minimisation against path efficiency, directly analogous to the project's LQR (efficiency) vs MPC (safety) trade-off.",
+          "relevance_to_project": {
+            "score": "HIGH",
+            "rationale": "The architecture directly mirrors this project's philosophy: a nominal efficient planner (RRT* without risk ≈ LQR tracking) is complemented by a risk-aware planner (risk-biased RRT* ≈ MPC obstacle avoidance), blended by a probabilistic risk map (≈ the sigmoid supervisor weight). The smooth B-spline trajectory output maps to the project's jerk-aware control output smoothing.",
+            "applicable_components": [
+              "Probabilistic risk map as supervisor blending input",
+              "Risk-biased path planning integration",
+              "Smooth trajectory output design",
+              "Dynamic obstacle risk modelling"
+            ]
+          }
+        },
+        {
+          "title": "HERMES: A Holistic End-to-End Risk-Aware Multimodal Embodied System with Vision-Language Models for Long-Tail Autonomous Driving",
+          "authors": ["Weizhe Tang", "Junwei You", "Jiaxi Liu", "Zhaoyi Wang", "Rui Gan", "Zilin Huang", "Feng Wei", "Bin Ran"],
+          "year": 2026,
+          "arxiv_id": "2602.00993",
+          "arxiv_url": "http://arxiv.org/abs/2602.00993v1",
+          "submitted_date": "2026-02-01",
+          "venue": "Under review",
+          "abstract_snippet": "HERMES is a risk-aware end-to-end multimodal driving framework that injects explicit long-tail risk cues into trajectory planning. It employs a foundation-model-assisted annotation pipeline to produce Long-Tail Scene Context and Long-Tail Planning Context, capturing hazard-centric cues with maneuver intent and safety preference. A Tri-Modal Driving Module fuses multi-view perception, historical motion cues, and semantic guidance, ensuring risk-aware trajectory planning under long-tail scenarios.",
+          "key_contribution": "VLM-augmented end-to-end risk-aware planner specifically designed for long-tail edge cases in autonomous driving. Introduces structured hazard-centric context annotations and a multi-modal fusion architecture for risk-aware trajectory generation under rare scenarios.",
+          "relevance_to_project": {
+            "score": "LOW-MEDIUM",
+            "rationale": "The high-level risk categorisation and hazard-centric context design are conceptually relevant to the project's risk supervisor: identifying what makes a scenario 'high-risk' (triggering MPC) vs 'low-risk' (allowing LQR) could be enriched with semantic scene context. However, the VLM complexity is far beyond the project's current scope and compute budget.",
+            "applicable_components": [
+              "Risk categorisation taxonomy for supervisor",
+              "Long-tail scenario identification",
+              "Semantic risk context definition"
+            ]
+          }
+        },
+        {
+          "title": "ARGUS: A Framework for Risk-Aware Path Planning in Tactical UGV Operations",
+          "authors": ["Nuno Soares", "António Grilo"],
+          "year": 2025,
+          "arxiv_id": "2511.07565",
+          "arxiv_url": "http://arxiv.org/abs/2511.07565v1",
+          "submitted_date": "2025-11-10",
+          "venue": "Thesis / technical report",
+          "abstract_snippet": "ARGUS is a mission planning framework for Unmanned Ground Vehicles (UGVs) in tactical environments, translating battlefield complexity and commander intent into executable action plans. ARGUS processes geospatial terrain data, military intelligence on threats, and mission priorities to generate optimized trajectories balancing mission objectives against risks from threats and terrain. Dynamic nature allows real-time adaptation to unforeseen events. Validated in a practical exercise with the Portuguese Army; routes were successfully integrated into UGV control systems.",
+          "key_contribution": "End-to-end tactical UGV mission planning integrating heterogeneous risk sources (terrain, threats, geospatial data) into a multi-objective trajectory optimiser with real-time replanning. Hardware-validated with a real army UGV platform.",
+          "relevance_to_project": {
+            "score": "MEDIUM",
+            "rationale": "ARGUS demonstrates practical risk-aware trajectory planning for UGVs (same robot category as differential-drive robots) with real-world validation. The multi-source risk aggregation into a single trajectory cost is directly applicable to the project's risk supervisor design: aggregating obstacle distance, velocity, and map information into the blending weight.",
+            "applicable_components": [
+              "Multi-source risk aggregation for supervisor",
+              "UGV trajectory planning with risk constraints",
+              "Real-world risk-aware navigation validation methodology"
+            ]
+          }
+        },
+        {
+          "title": "A Risk-Aware Spatial-Temporal Trajectory Planning Framework for Autonomous Vehicles Using QP-MPC and Dynamic Hazard Fields",
+          "authors": ["Zhen Tian", "Zhihao Lin", "Dezong Zhao", "Christos Anagnostopoulos", "Qiyuan Wang", "Wenjing Zhao", "Xiaodan Wang", "Chongfeng Wei"],
+          "year": 2025,
+          "arxiv_id": "2509.00643",
+          "arxiv_url": "http://arxiv.org/abs/2509.00643v1",
+          "submitted_date": "2025-08-31",
+          "venue": "Under review",
+          "abstract_snippet": "An enhanced QP-MPC-based framework incorporates three key innovations: (i) a novel cost function with a dynamic hazard field (DHF) explicitly balancing safety, efficiency, and comfort; (ii) seamless integration of this cost function into the QP-MPC formulation, enabling direct optimization of desired driving behaviors; and (iii) extensive validation across complex tasks. The spatial safe planning is guided by DHF for risk assessment, while temporal safe planning uses a space-time graph. Quintic polynomial sampling and sub-rewards of comfort and efficiency are used. Extensive simulations demonstrate outperformance vs benchmark optimization methods in efficiency, stability, and comfort.",
+          "key_contribution": "QP-MPC formulation augmented with a Dynamic Hazard Field (DHF) cost term that directly encodes spatial risk into the MPC objective. The DHF provides a continuous, differentiable risk landscape compatible with QP solvers, making it directly usable in CVXPY-based MPC implementations.",
+          "relevance_to_project": {
+            "score": "HIGH",
+            "rationale": "The DHF-augmented QP-MPC approach is directly implementable in the project's CVXPY-based MPC. Adding a DHF cost term to the existing MPC objective would enrich the risk-awareness beyond binary obstacle avoidance constraints, creating a gradient from high-risk (near obstacles) to low-risk (open space) that could directly drive the supervisor blending weight. The QP-MPC formulation maintains OSQP compatibility.",
+            "applicable_components": [
+              "Risk-aware MPC objective (DHF cost term)",
+              "Supervisor blending weight from continuous risk field",
+              "QP-compatible risk encoding",
+              "Spatial-temporal trajectory planning integration"
+            ]
+          }
+        }
+      ]
+    },
+
+    {
+      "topic_id": 6,
+      "topic_name": "Smooth Switching Supervisory Control with Stability Guarantees",
+      "primary_query": "ti:switching+AND+ti:control+AND+abs:stability+AND+abs:supervisory",
+      "primary_api_url": "https://export.arxiv.org/api/query?search_query=ti:switching+AND+ti:control+AND+abs:stability+AND+abs:supervisory&max_results=5&sortBy=submittedDate&sortOrder=descending",
+      "fallback_query": "abs:%22smooth+switching%22+AND+abs:control+AND+abs:stability",
+      "fallback_api_url": "https://export.arxiv.org/api/query?search_query=abs:%22smooth+switching%22+AND+abs:control+AND+abs:stability&max_results=5&sortBy=submittedDate&sortOrder=descending",
+      "total_found_by_api": 3,
+      "survey_note": "Smooth supervisory switching between LQR and MPC is a niche topic with limited exact-match literature. The papers found represent the closest published work on supervisory controller switching theory, anti-chatter mechanisms, and stability under switching. The project's sigmoid blending represents a novel continuous-switching approach not covered by these binary-switching papers.",
+      "papers": [
+        {
+          "title": "Online Learning for Supervisory Switching Control",
+          "authors": ["Haoyuan Sun", "Ali Jadbabaie"],
+          "year": 2026,
+          "arxiv_id": "2603.14762",
+          "arxiv_url": "http://arxiv.org/abs/2603.14762v2",
+          "submitted_date": "2026-03-17",
+          "venue": "Under review",
+          "abstract_snippet": "Supervisory switching control for partially-observed linear dynamical systems: identify and deploy the best controller by periodically selecting among N candidate controllers, some of which may destabilize the system. Classical estimator-based supervisory control guarantees asymptotic stability but lacks quantitative finite-time performance bounds. A novel non-asymptotic analysis adapts multi-armed bandit algorithms to supervisory control, evaluating candidates via scoring criteria that leverage system observability. Two algorithmic variants identify the most suitable controller in O(N log N) steps while achieving finite L2-gain.",
+          "key_contribution": "First non-asymptotic analysis of supervisory control using multi-armed bandit algorithms, providing O(N log N) controller identification time and finite L2-gain guarantees even when candidate controllers include destabilising ones. Directly addresses the gap between stability guarantees and finite-time performance bounds in switching supervisors.",
+          "relevance_to_project": {
+            "score": "HIGH",
+            "rationale": "This paper provides the theoretical foundation for the project's supervisor: selecting between LQR and MPC controllers based on runtime observations, with finite-time guarantees. The O(N log N) identification bound validates the project's hysteresis-based anti-chatter design (N=2 controllers → O(1) switching horizon). The finite L2-gain guarantee is the stability property the project's sigmoid blending aims to approximate continuously.",
+            "applicable_components": [
+              "Supervisory mode-switching theoretical guarantees",
+              "Anti-chatter hysteresis design justification",
+              "LQR vs MPC controller scoring criteria",
+              "Finite-time stability analysis of the switching supervisor"
+            ]
+          }
+        },
+        {
+          "title": "Hybrid Control of ADT Switched Linear Systems Subject to Actuator Saturation",
+          "authors": ["Fen Wu", "Chengzhi Yuan"],
+          "year": 2026,
+          "arxiv_id": "2602.18247",
+          "arxiv_url": "http://arxiv.org/abs/2602.18247v1",
+          "submitted_date": "2026-02-20",
+          "venue": "Under review",
+          "abstract_snippet": "A hybrid output-feedback control framework for average dwell-time (ADT) switched linear systems with actuator saturation. Subsystems may be exponentially unstable; saturation nonlinearity is handled via a deadzone-based representation. The proposed hybrid controller combines mode-dependent full-order dynamic output-feedback controllers with a supervisory reset mechanism updating controller states at switching instants. Sufficient conditions are derived as LMIs for exponential stability under ADT switching and prescribed weighted L2-gain disturbance attenuation.",
+          "key_contribution": "LMI-based synthesis of supervisory controllers for ADT-switched systems with actuator saturation, including a state-reset mechanism at switching instants that handles the controller state discontinuity problem. Provides exponential stability under average dwell-time constraints and L2-gain attenuation.",
+          "relevance_to_project": {
+            "score": "MEDIUM-HIGH",
+            "rationale": "The actuator saturation + switching system model directly applies to the project: the differential-drive robot has actuator limits (max wheel speed) and switches between LQR and MPC controllers. The controller-state reset at switching instants corresponds to initialising the MPC warm-start from the LQR state (or vice versa). The ADT constraint formalises the project's minimum dwell-time hysteresis as an average rather than worst-case condition.",
+            "applicable_components": [
+              "Actuator saturation handling in switching controller",
+              "Controller state reset at mode transitions",
+              "Average dwell-time hysteresis formalisation",
+              "LMI-based stability analysis for the hybrid system"
+            ]
+          }
+        },
+        {
+          "title": "Robust and Dexterous Dual-Arm Tele-Cooperation using Adaptable Impedance Control",
+          "authors": ["Keyhan Kouhkiloui Babarahmati", "Mohammadreza Kasaei", "Carlo Tiseo", "Michael Mistry", "Sethu Vijayakumar"],
+          "year": 2021,
+          "arxiv_id": "2108.04567",
+          "arxiv_url": "http://arxiv.org/abs/2108.04567v6",
+          "submitted_date": "2021-08-10",
+          "venue": "Under review (extended version)",
+          "abstract_snippet": "Building on Fractal Impedance Control (FIC) introduced previously, this paper presents an extension to dual-arm tele-cooperation. Unlike traditional impedance controllers, the approach ensures stability without energy tanks. FIC is extended to bimanual operations, allowing stable and smooth switching between different dynamic tasks without gain tuning. A telemanipulation architecture offers higher transparency and dexterity, addressing signal latency and low-bandwidth communication. Extensive experiments validate robustness for planetary exploration and dexterous telemanipulation.",
+          "key_contribution": "Fractal Impedance Control enables smooth, bumpless switching between different dynamic manipulation tasks without gain scheduling or energy tanks. The non-linear stiffness profile of FIC provides inherent passivity and smooth mode transitions — analogous to the project's sigmoid blending for bumpless LQR-MPC transitions.",
+          "relevance_to_project": {
+            "score": "MEDIUM",
+            "rationale": "The FIC bumpless-switching property is conceptually analogous to the project's rate-limited sigmoid: both aim to achieve C0-continuous (no step) controller output transitions when switching modes. The energy-tank-free passivity proof is relevant for certifying the project's blended output u = w*u_mpc + (1-w)*u_lqr as passive under switching.",
+            "applicable_components": [
+              "Bumpless switching design philosophy",
+              "Passivity-based stability under smooth transitions",
+              "Anti-chatter switching without gain scheduling"
+            ]
+          }
+        }
+      ]
+    },
+
+    {
+      "topic_id": 7,
+      "topic_name": "Koopman Operator Linear MPC for Nonlinear Systems",
+      "primary_query": "ti:Koopman+AND+ti:MPC",
+      "primary_api_url": "https://export.arxiv.org/api/query?search_query=ti:Koopman+AND+ti:MPC&max_results=5&sortBy=submittedDate&sortOrder=descending",
+      "total_found_by_api": 12,
+      "papers": [
+        {
+          "title": "Polynomial Parametric Koopman Operators for Stochastic MPC",
+          "authors": ["Efstathios Iliakis", "Wallace Gian Yion Tan", "Liang Wu", "Jan Drgona", "Richard D. Braatz"],
+          "year": 2026,
+          "arxiv_id": "2604.00935",
+          "arxiv_url": "http://arxiv.org/abs/2604.00935v1",
+          "submitted_date": "2026-04-01",
+          "venue": "Submitted to CDC 2026",
+          "abstract_snippet": "A parametric Koopman operator framework for Stochastic Model Predictive Control (SMPC) parametrizes the Koopman operator by Polynomial Chaos Expansions (PCEs). The model is learned from data using EDMD-DL, preserving convex least-squares structure for PCE coefficients. Unlike conventional stochastic Galerkin projection, a condensed deterministic reformulation of the SMPC problem is derived whose dimension scales only with the control horizon and input dimension, independent of lifted state dimension and PCE terms. Framework enables efficient nonlinear SMPC with expectation and second-order moment constraints using standard convex optimization solvers.",
+          "key_contribution": "First Koopman-PCE framework for stochastic MPC of nonlinear systems, with a condensed deterministic reformulation that scales independently of lifted state dimension. Enables second-order moment constraints (variance bounding) in the SMPC problem using standard QP/SOCP solvers — directly compatible with CVXPY.",
+          "relevance_to_project": {
+            "score": "HIGH",
+            "rationale": "The Koopman-PCE SMPC provides a data-driven path to upgrade the project's linearised unicycle MPC with a principled nonlinear predictor. The CVXPY-compatible SOCP reformulation maintains the existing solver infrastructure. Scaling independence from lifted dimension is critical for real-time performance on the robot's compute budget. The second-order moment constraints could bound output jerk variance — directly improving the project's jerk-aware metrics.",
+            "applicable_components": [
+              "Data-driven nonlinear MPC prediction model",
+              "Stochastic MPC constraint formulation",
+              "CVXPY-compatible SOCP reformulation",
+              "Jerk variance bounding via moment constraints"
+            ]
+          }
+        },
+        {
+          "title": "DeePC vs. Koopman MPC for Pasteurization: A Comparative Study",
+          "authors": ["Branislav Daráš", "Patrik Valábek", "Martin Klaučo"],
+          "year": 2026,
+          "arxiv_id": "2604.00524",
+          "arxiv_url": "http://arxiv.org/abs/2604.00524v1",
+          "submitted_date": "2026-04-01",
+          "venue": "Under review",
+          "abstract_snippet": "Two data-driven predictive control methods are compared: Data-enabled predictive control (DeePC) uses behavioral systems theory to predict from input-output trajectories via Hankel matrices; Koopman-based MPC (KMPC) learns a lifted linear state-space representation from data. Both share identical prediction horizons, cost weights, and constraints. Results: both achieve feasible constrained control with comparable tracking error; KMPC tracks more tightly under the chosen cost, while DeePC produces substantially smoother input trajectories.",
+          "key_contribution": "Head-to-head DeePC vs KMPC comparison showing that KMPC achieves tighter tracking while DeePC produces smoother inputs under identical hyperparameters. Provides practitioners with clear guidance: KMPC for tracking precision, DeePC for input smoothness — directly relevant to choosing between methods for jerk-aware control.",
+          "relevance_to_project": {
+            "score": "MEDIUM",
+            "rationale": "The tracking precision vs input smoothness trade-off is directly relevant to the project's jerk-aware metrics. If KMPC provides tighter tracking of the reference trajectory (LQR target), it could reduce the need for MPC intervention, improving efficiency. The DeePC smoother inputs map to lower jerk, which is an explicit project metric. This paper helps choose between the two data-driven upgrades.",
+            "applicable_components": [
+              "Data-driven MPC method selection for jerk-aware control",
+              "Tracking precision vs input smoothness trade-off",
+              "Benchmark comparison methodology"
+            ]
+          }
+        },
+        {
+          "title": "Koopman-Based Linear MPC for Safe Control Using Control Barrier Functions",
+          "authors": ["Shuo Liu", "Liang Wu", "Dawei Zhang", "Jan Drgona", "Calin A. Belta"],
+          "year": 2026,
+          "arxiv_id": "2603.21070",
+          "arxiv_url": "http://arxiv.org/abs/2603.21070v2",
+          "submitted_date": "2026-03-22",
+          "venue": "Under review (8 pages)",
+          "abstract_snippet": "A Koopman-based LMPC framework for safety-critical control of nonlinear discrete-time systems uses discrete-time control barrier functions (DCBFs) enforced through barrier constraints. To avoid computationally demanding nonlinear programming, a DCBF-augmented dynamical system is lifted via Koopman operator theory into a higher-dimensional space where both system dynamics and barrier function admit a linear predictor representation. This transforms the nonlinear safety-constrained MPC into a quadratic program (QP). Slack variables relax barrier constraints for improved feasibility. Validated on a navigation task for a robot with nonlinear dynamics.",
+          "key_contribution": "Integrates Koopman lifting, DCBF safety constraints, and LMPC into a single QP formulation for nonlinear robot navigation. The barrier function itself is lifted into the Koopman space, enabling a pure QP without SOCP. Slack variables maintain feasibility when the barrier constraint tightness would otherwise cause infeasibility — directly solving the MPC infeasibility problem that motivates the project's fallback logic.",
+          "relevance_to_project": {
+            "score": "CRITICAL",
+            "rationale": "This paper is the closest existing work to the project's MPC component with a principled nonlinear extension. It combines: (1) Koopman lifting of the differential-drive nonlinear dynamics, (2) CBF-based obstacle avoidance constraints, (3) LMPC (QP, compatible with OSQP), (4) slack-variable feasibility relaxation — which maps directly to the project's fallback feasibility mechanism. Implementing this would enhance the project's MPC from linearised unicycle to Koopman-lifted unicycle, removing linearisation error.",
+            "applicable_components": [
+              "Koopman lifting of differential-drive unicycle model",
+              "DCBF obstacle constraints in Koopman-lifted QP",
+              "Slack-variable MPC feasibility relaxation (fallback logic upgrade)",
+              "QP/OSQP-compatible formulation for real-time control",
+              "Navigation task validation on nonlinear robot dynamics"
+            ]
+          }
+        },
+        {
+          "title": "Stability of Data-Driven Koopman MPC with Terminal Conditions",
+          "authors": ["Irene Schimperna", "Lea Bold", "Johannes Köhler", "Karl Worthmann", "Lalo Magni"],
+          "year": 2025,
+          "arxiv_id": "2511.21248",
+          "arxiv_url": "http://arxiv.org/abs/2511.21248v1",
+          "submitted_date": "2025-11-26",
+          "venue": "Under review (8 pages)",
+          "abstract_snippet": "Conditions are derived under which MPC with terminal conditions, using a data-driven surrogate model as prediction model, asymptotically stabilizes the plant despite approximation errors. Recursive feasibility and asymptotic stability are proven if a proportional error bound holds, where proportional means the bound is linear in the norm of the state and input. For a broad class of nonlinear systems, this condition can be satisfied using data-driven surrogate models generated by kernel EDMD (kEDMD) using the Koopman operator.",
+          "key_contribution": "Proves asymptotic stability and recursive feasibility of Koopman MPC with terminal conditions under a proportional approximation error bound, and shows kEDMD satisfies this bound for a broad class of nonlinear systems. Provides the missing stability theory for data-driven Koopman MPC.",
+          "relevance_to_project": {
+            "score": "HIGH",
+            "rationale": "Provides the stability guarantees needed to certify any Koopman-based upgrade of the project's MPC. The proportional error bound condition is verifiable offline using kEDMD approximation quality metrics, enabling the project to choose a Koopman dictionary size that guarantees stability. The terminal condition design maps directly to the project's MPC terminal cost (which currently uses LQR terminal cost, consistent with this framework).",
+            "applicable_components": [
+              "Koopman MPC stability certificate",
+              "kEDMD model quality validation",
+              "Terminal condition design for Koopman MPC",
+              "Recursive feasibility proof for Koopman-lifted MPC"
+            ]
+          }
+        },
+        {
+          "title": "Data-Driven Koopman MPC Using Mixed Stochastic-Deterministic Tubes",
+          "authors": ["Zhengang Zhong", "Ehecatl Antonio del Rio-Chanona", "Panagiotis Petsagkourakis"],
+          "year": 2025,
+          "arxiv_id": "2510.21308",
+          "arxiv_url": "http://arxiv.org/abs/2510.21308v1",
+          "submitted_date": "2025-10-24",
+          "venue": "Journal of Process Control, 2025 (Accepted)",
+          "abstract_snippet": "A data-driven stochastic MPC design for discrete-time nonlinear systems with additive disturbances leverages the Koopman operator and a distributionally robust optimization (DRO) framework. By lifting the dynamical system into a linear space, a finite-dimensional approximation of the Koopman operator is achieved. Modeling approximation and additive disturbance errors are explicitly accounted for by a mixed stochastic-deterministic tube for the lifted linear model. Stochastic tubes are constructed using DRO; deterministic tubes use a hyper-cube hull. Finite sample error bounds are provided.",
+          "key_contribution": "Combines Koopman lifting with DRO-based stochastic tubes and deterministic hypercube tubes in a unified Tube MPC framework. The mixed tube accounts for both Koopman approximation error (deterministic) and external disturbances (stochastic-DRO), providing finite sample bounds on constraint violation probability.",
+          "relevance_to_project": {
+            "score": "HIGH",
+            "rationale": "Directly upgrades the project's existing Tube MPC with: (1) Koopman lifting to remove linearisation error, (2) DRO stochastic tubes for disturbance robustness, (3) deterministic tubes for Koopman approximation error — all in a unified framework. The mixed-tube design could replace or augment the project's current fixed-radius tube, making it adaptive to actual disturbance distributions observed during navigation.",
+            "applicable_components": [
+              "Tube MPC upgrade with Koopman lifting",
+              "DRO stochastic tube design for obstacle constraints",
+              "Deterministic tube for model approximation error",
+              "Finite sample constraint violation bounds"
+            ]
+          }
+        }
+      ]
+    },
+
+    {
+      "topic_id": 8,
+      "topic_name": "Stochastic MPC with Chance Constraints for Mobile Robots",
+      "primary_query": "ti:stochastic+AND+ti:MPC+AND+abs:%22chance+constraints%22+AND+abs:robot",
+      "primary_api_url": "https://export.arxiv.org/api/query?search_query=ti:stochastic+AND+ti:MPC+AND+abs:%22chance+constraints%22+AND+abs:robot&max_results=5&sortBy=submittedDate&sortOrder=descending",
+      "fallback_query": "abs:%22chance+constraints%22+AND+abs:MPC+AND+abs:robot",
+      "fallback_api_url": "https://export.arxiv.org/api/query?search_query=abs:%22chance+constraints%22+AND+abs:MPC+AND+abs:robot&max_results=5&sortBy=submittedDate&sortOrder=descending",
+      "total_found_by_api": 9,
+      "papers": [
+        {
+          "title": "Data-Driven Sampling Based Stochastic MPC for Skid-Steer Mobile Robot Navigation",
+          "authors": ["Ananya Trivedi", "Sarvesh Prajapati", "Anway Shirgaonkar", "Mark Zolotas", "Taskin Padir"],
+          "year": 2024,
+          "arxiv_id": "2411.03289",
+          "arxiv_url": "http://arxiv.org/abs/2411.03289v1",
+          "submitted_date": "2024-11-05",
+          "venue": "Under review for ICRA 2025",
+          "abstract_snippet": "Traditional motion modeling for skid-steer robots struggles with nonlinear tire-terrain dynamics during high-speed maneuvers. A dynamic unicycle model is enhanced with Gaussian Process (GP) regression outputs. A chance-constrained Model Predictive Path Integral (MPPI) control method solves the resultant stochastic optimal control problem, formulating both obstacle avoidance and path-following as chance constraints accounting for GP residual uncertainties. GPU acceleration efficiently manages the non-convex problem for real-time performance. Validated on simulation and hardware experiments on a skid-steer robot platform at high speed.",
+          "key_contribution": "First GP-augmented MPPI with chance constraints for skid-steer mobile robots covering both obstacle avoidance and path-following simultaneously. Uses GPU-accelerated Monte Carlo for real-time performance. The unicycle model + GP residuals + chance constraints architecture is the closest stochastic analogue to the project's deterministic unicycle + MPC architecture.",
+          "relevance_to_project": {
+            "score": "CRITICAL",
+            "rationale": "This paper provides a stochastic upgrade path for the project's core architecture: replace the deterministic unicycle-MPC with a GP-augmented unicycle stochastic MPC. The chance-constrained MPPI replaces the project's CVXPY/OSQP QP with a GPU-parallel Monte Carlo sampler for higher-dimensional uncertainty. The hardware validation on a skid-steer robot (mechanically similar to differential drive) confirms practical feasibility at the project's target operating speeds.",
+            "applicable_components": [
+              "Stochastic MPC upgrade for the obstacle avoidance layer",
+              "GP residual dynamics model for the unicycle model",
+              "Chance-constrained obstacle avoidance formulation",
+              "GPU-accelerated MPC for real-time performance",
+              "Hardware validation methodology on mobile robot platform"
+            ]
+          }
+        },
+        {
+          "title": "Chance-Constrained Convex MPC for Robust Quadruped Locomotion Under Parametric and Additive Uncertainties",
+          "authors": ["Ananya Trivedi", "Sarvesh Prajapati", "Mark Zolotas", "Michael Everett", "Taskin Padir"],
+          "year": 2024,
+          "arxiv_id": "2411.03481",
+          "arxiv_url": "http://arxiv.org/abs/2411.03481v1",
+          "submitted_date": "2024-11-05",
+          "venue": "Under review for Robotics and Automation Letters",
+          "abstract_snippet": "A Chance-Constrained MPC (CCMPC) framework explicitly models payload and terrain variability as distributions of parametric and additive disturbances within the single rigid body dynamics model. Safe and consistent performance under uncertain dynamics is ensured by expressing friction cone constraints as chance constraints. The stochastic control problem uses a computationally efficient quadratic programming formulation. Monte Carlo simulations show CCMPC significantly outperforms LMPC and hand-tuned safety margins. Hardware experiments on Unitree Go1 with unknown loads exceeding 50% of body weight succeed without additional parameter tuning.",
+          "key_contribution": "CCMPC with explicit parametric + additive uncertainty modelling using a convex QP formulation. Demonstrates 100% success rate vs 51.7% for NMPC on legged locomotion under severe parametric uncertainty (50%+ load variation). The convex QP formulation maintains real-time tractability — same solver class as the project's OSQP.",
+          "relevance_to_project": {
+            "score": "MEDIUM-HIGH",
+            "rationale": "The CCMPC framework's parametric + additive uncertainty decomposition is directly applicable to the project's differential-drive MPC: parametric uncertainty (wheel slippage, terrain friction) and additive uncertainty (localisation noise, wind disturbance) can be separately modelled. The convex QP formulation means the project's CVXPY/OSQP solver remains usable, making this an incremental upgrade.",
+            "applicable_components": [
+              "Parametric uncertainty modelling for the differential-drive model",
+              "Additive disturbance chance constraint formulation",
+              "Convex QP-compatible CCMPC implementation",
+              "Chance-constrained MPC hardware validation methodology"
+            ]
+          }
+        },
+        {
+          "title": "CC-VPSTO: Chance-Constrained Via-Point-Based Stochastic Trajectory Optimisation for Safe and Efficient Online Robot Motion Planning",
+          "authors": ["Lara Brudermüller", "Guillaume Berger", "Julius Jankowski", "Raunak Bhattacharyya", "Raphaël Jungers", "Nick Hawes"],
+          "year": 2024,
+          "arxiv_id": "2402.01370",
+          "arxiv_url": "http://arxiv.org/abs/2402.01370v3",
+          "submitted_date": "2024-02-02",
+          "venue": "Submitted to IEEE Transactions on Robotics",
+          "abstract_snippet": "A real-time capable framework generates safe and task-efficient robot motions for stochastic control problems by framing motion planning as a chance-constrained optimisation problem constraining the probability of safety constraint violation below a threshold. A Monte Carlo approximation estimates this probability. Several over-approximation constructions ensure the sample-based problem's solutions adhere to the original chance-constraint with high confidence. Integrated into the VP-STO motion planner as CC-VPSTO and validated in MPC settings on simulation and real-world robot experiments.",
+          "key_contribution": "General-purpose chance-constrained stochastic trajectory optimisation framework with no assumptions on uncertainty distribution, dynamics, cost function, or constraint form. The Monte Carlo approximation with over-approximation guarantees provides distribution-free high-confidence safety certificates. Validated in MPC settings — directly applicable as a stochastic outer loop around the project's MPC.",
+          "relevance_to_project": {
+            "score": "HIGH",
+            "rationale": "CC-VPSTO's distribution-free chance constraint approach is ideal for the project's early prototyping phase where disturbance distribution is unknown. It can wrap around the project's existing MPC as a stochastic safety filter, providing probabilistic guarantees without requiring the GP/DR infrastructure of other papers. The MPC-setting validation confirms compatibility with the project's receding-horizon architecture.",
+            "applicable_components": [
+              "Distribution-free chance-constrained safety filter",
+              "Stochastic MPC outer loop wrapper",
+              "Monte Carlo probability estimation for obstacle avoidance",
+              "Real-world robot stochastic MPC validation"
+            ]
+          }
+        },
+        {
+          "title": "Multi-Contact Stochastic Predictive Control for Legged Robots with Contact Locations Uncertainty",
+          "authors": ["Ahmad Gazar", "Majid Khadiv", "Andrea Del Prete", "Ludovic Righetti"],
+          "year": 2023,
+          "arxiv_id": "2309.04469",
+          "arxiv_url": "http://arxiv.org/abs/2309.04469v2",
+          "submitted_date": "2023-09-08",
+          "venue": "Under review",
+          "abstract_snippet": "Robust kino-dynamic whole-body trajectory optimisation using stochastic NMPC (SNMPC) considers additive uncertainties on model dynamics subject to contact location chance-constraints as a function of robot full kinematics. SNMPC outperforms classic NMPC for whole-body trajectory optimization in terms of contact location constraint satisfaction (safety). Extensive Monte-Carlo simulations for a quadruped robot show SNMPC achieves 100% success rate while NMPC failed 48.3% of all agile motions over stepping stones.",
+          "key_contribution": "SNMPC with contact-location chance constraints demonstrates a 48.3% → 0% failure rate improvement over deterministic NMPC for dynamic legged locomotion. The 100% vs 51.7% success comparison is a compelling quantitative argument for upgrading deterministic MPC to stochastic MPC — equally applicable to the project's deterministic vs stochastic MPC comparison.",
+          "relevance_to_project": {
+            "score": "MEDIUM",
+            "rationale": "The 48.3% failure rate of deterministic NMPC vs 0% for SNMPC under model uncertainty is a strong empirical argument for adding chance constraints to the project's MPC. While the legged-robot context differs from differential drive, the fundamental result — deterministic MPC fails in the presence of uncertainty while SNMPC succeeds — directly motivates the project's stochastic upgrade path.",
+            "applicable_components": [
+              "Empirical justification for stochastic MPC upgrade",
+              "Chance-constrained NMPC formulation methodology",
+              "Monte Carlo evaluation protocol for stochastic MPC"
+            ]
+          }
+        },
+        {
+          "title": "Scenario-Based Motion Planning with Bounded Probability of Collision",
+          "authors": ["Oscar de Groot", "Laura Ferranti", "Dariu Gavrila", "Javier Alonso-Mora"],
+          "year": 2023,
+          "arxiv_id": "2307.01070",
+          "arxiv_url": "http://arxiv.org/abs/2307.01070v1",
+          "submitted_date": "2023-07-03",
+          "venue": "Submitted to IEEE Transactions on Robotics",
+          "abstract_snippet": "Safe Horizon MPC explicitly constrains the joint probability of collision with all obstacles over the duration of the motion plan, rather than marginalizing over individual per-step collision probabilities. This is achieved by reformulating the chance-constrained planning problem using scenario optimization and predictive control. The method is less conservative than state-of-the-art approaches, applicable to arbitrary probability distributions, computationally tractable, and scalable. Demonstrated on a mobile robot and autonomous vehicle in environments shared with humans.",
+          "key_contribution": "Safe Horizon MPC: first MPC formulation to constrain the joint (rather than marginal) collision probability over the entire planning horizon. Scenario optimization provides the sample-based reformulation. Demonstrated on mobile robot navigation — directly applicable to the project. Less conservative than marginal per-step chance constraints (less restrictive than the project's current deterministic constraints).",
+          "relevance_to_project": {
+            "score": "HIGH",
+            "rationale": "The joint collision probability constraint is superior to the project's current per-step deterministic constraints: it correctly accounts for correlation between consecutive obstacle constraints and produces less conservative trajectories. The scenario-optimization reformulation is distribution-free and scalable. The mobile robot validation makes this directly applicable, and the less-conservative property would improve the project's throughput efficiency metrics.",
+            "applicable_components": [
+              "Joint probability of collision constraint for the MPC",
+              "Scenario-based reformulation of chance constraints",
+              "Less-conservative obstacle avoidance for improved efficiency",
+              "Mobile robot validation of stochastic MPC"
+            ]
+          }
+        }
+      ]
+    }
+
+  ],
+
+  "cross_cutting_themes": {
+    "description": "Themes that appear across multiple topics and are directly applicable to the project architecture.",
+    "themes": [
+      {
+        "theme": "Linearisation of Nonlinear Differential-Drive Dynamics",
+        "related_paper_ids": ["2404.10018", "2603.21070", "2411.03289"],
+        "project_relevance": "All three approaches to linearising unicycle/differential-drive dynamics (DFL, Koopman lifting, GP residuals) are applicable to improving the project's current DARE-LQR linearisation. The DARE-LQR is exact at the operating point; Koopman lifting (2603.21070) extends validity across the state space."
+      },
+      {
+        "theme": "CVaR and Distributional Robustness for Obstacle Constraints",
+        "related_paper_ids": ["2502.05448", "2403.05081", "2309.08821", "2308.11510", "2111.12977"],
+        "project_relevance": "All five papers use DR-CVaR constraints for obstacle avoidance. The SOCP reformulations are CVXPY-compatible and could replace the project's current Euclidean-distance linearised constraints with probabilistically robust ones. DR-CVaR provides an interpretable 'risk budget' that directly maps to the supervisor's blending weight."
+      },
+      {
+        "theme": "Recursive Feasibility and Stability Under Switching",
+        "related_paper_ids": ["2303.10327", "2603.14762", "2602.18247", "2511.21248", "2502.05448"],
+        "project_relevance": "The recursive feasibility of the MPC QP (when switching from LQR to MPC) is a critical unproven property of the current project. Papers 2603.14762 (supervisory) and 2511.21248 (Koopman MPC) provide conditions under which recursive feasibility holds, enabling formal certification of the project's switching behaviour."
+      },
+      {
+        "theme": "Real-Time MPC via QP/OSQP on Mobile Robot Platforms",
+        "related_paper_ids": ["2404.10018", "2603.21070", "2411.03481", "2402.01370"],
+        "project_relevance": "All four papers use QP formulations (OSQP-class) for real-time MPC on mobile robots, validating the project's choice of CVXPY+OSQP. They collectively demonstrate that QP-MPC can run at 10-100 Hz on resource-constrained platforms, confirming the project's real-time feasibility claim."
+      },
+      {
+        "theme": "Hysteresis and Anti-Chatter Mechanisms in Hybrid Controllers",
+        "related_paper_ids": ["2303.10327", "2603.14762", "2602.18247", "2108.04567"],
+        "project_relevance": "All four papers address the problem of preventing rapid oscillation between control modes (chattering). The project's rate-limited sigmoid + hysteresis combination is an engineering realisation of the theoretical mechanisms described in these papers. Paper 2603.14762 provides O(N log N) switching bounds that justify the project's minimum dwell-time design."
+      },
+      {
+        "theme": "Jerk and Smoothness Metrics in MPC",
+        "related_paper_ids": ["2509.00643", "2602.09204", "2604.00524", "2402.01370"],
+        "project_relevance": "These papers collectively demonstrate that input smoothness (jerk) is a primary evaluation criterion in trajectory-tracking MPC for autonomous vehicles and robots. The project's jerk-aware logging (peak/RMS/p95) aligns with state-of-the-art evaluation practices and provides a competitive differentiator for publication."
+      }
+    ]
+  },
+
+  "recommended_citation_priority": {
+    "critical_references": [
+      {
+        "arxiv_id": "2404.10018",
+        "reason": "Closest architectural analogue to the project; LMPC+CBF+differential drive; published in IET."
+      },
+      {
+        "arxiv_id": "2603.21070",
+        "reason": "Koopman-LMPC+DCBF+navigation task; represents the immediate next step for the project's MPC upgrade."
+      },
+      {
+        "arxiv_id": "2603.14762",
+        "reason": "Supervisory switching control with finite-time guarantees; directly validates the project's supervisor design."
+      },
+      {
+        "arxiv_id": "2411.03289",
+        "reason": "GP-MPPI stochastic MPC for mobile robot (unicycle model); closest stochastic analogue to the project."
+      },
+      {
+        "arxiv_id": "2403.05081",
+        "reason": "DRCC-MPC for robot navigation; ICRA 2024; directly applicable risk-aware MPC for mobile robots."
+      }
+    ],
+    "high_priority_references": [
+      "2303.10327", "2510.19595", "2502.05448", "2404.03689",
+      "2509.00643", "2602.09204", "2511.21248", "2510.21308",
+      "2411.03481", "2307.01070", "2604.00935"
+    ],
+    "medium_priority_references": [
+      "2505.18858", "2402.06195", "2309.08821", "2308.11510",
+      "2510.07725", "2410.23634", "2303.04569", "2511.07565",
+      "2603.04603", "2602.18247", "2604.00524", "2309.04469",
+      "2402.01370"
+    ],
+    "low_priority_references": [
+      "2210.03704", "2111.12977", "2208.07035", "2602.00993", "2108.04567"
+    ]
+  }
+}

@@ -330,6 +330,81 @@ class Visualizer:
             fig.savefig(save_path, dpi=150, bbox_inches='tight')
         
         return fig
+
+    def plot_multi_trajectory_comparison(self, trajectories: Dict[str, np.ndarray],
+                                         reference: np.ndarray,
+                                         obstacles: List[Dict] = None,
+                                         d_safe: float = 0.3,
+                                         title: str = "Controller Comparison",
+                                         save_path: str = None) -> plt.Figure:
+        """
+        Plot a comparison for an arbitrary number of controller trajectories.
+        
+        Args:
+            trajectories: Mapping of controller label -> state trajectory
+            reference: Reference trajectory (N, 3)
+            obstacles: Optional list of obstacles
+            d_safe: Safety distance
+            title: Plot title
+            save_path: Optional path to save figure
+            
+        Returns:
+            Matplotlib figure object
+        """
+        fig, ax = plt.subplots(1, 1, figsize=(12, 8))
+
+        if obstacles:
+            for obs in obstacles:
+                safe_circle = Circle(
+                    (obs['x'], obs['y']),
+                    obs['radius'] + d_safe,
+                    color=self.colors['safe_zone'],
+                    alpha=0.25,
+                )
+                ax.add_patch(safe_circle)
+                obs_circle = Circle(
+                    (obs['x'], obs['y']),
+                    obs['radius'],
+                    color=self.colors['obstacle'],
+                    alpha=0.8,
+                )
+                ax.add_patch(obs_circle)
+
+        ax.plot(
+            reference[:, 0],
+            reference[:, 1],
+            '--',
+            color=self.colors['reference'],
+            linewidth=2,
+            label='Reference',
+            alpha=0.7,
+        )
+
+        palette = [
+            self.colors['lqr'],
+            self.colors['mpc'],
+            self.colors['actual'],
+            '#6A4C93',
+            '#198754',
+            '#D63384',
+        ]
+        for idx, (label, states) in enumerate(trajectories.items()):
+            color = palette[idx % len(palette)]
+            ax.plot(states[:, 0], states[:, 1], linewidth=2, color=color, label=label)
+
+        ax.set_xlabel('X Position (m)', fontsize=12)
+        ax.set_ylabel('Y Position (m)', fontsize=12)
+        ax.set_title(title, fontsize=14)
+        ax.legend(loc='best')
+        ax.grid(True, alpha=0.3)
+        ax.set_aspect('equal')
+
+        plt.tight_layout()
+
+        if save_path:
+            fig.savefig(save_path, dpi=150, bbox_inches='tight')
+
+        return fig
     
     def save_all_figures(self, prefix: str = "") -> None:
         """Close and save all current figures."""

@@ -12,18 +12,24 @@
 2. [Models Module](#2-models-module)
    - [differential_drive.py](#21-differential_drivepy)
    - [linearization.py](#22-linearizationpy)
+   - [actuator_dynamics.py](#23-actuator_dynamicspy)
 3. [Controllers Module](#3-controllers-module)
    - [lqr_controller.py](#31-lqr_controllerpy)
    - [mpc_controller.py](#32-mpc_controllerpy)
    - [yaw_stabilizer.py](#33-yaw_stabilizerpy)
-   - [hybrid_blender.py](#35-hybrid_blenderpy-new-in-v060)
+   - [cvxpygen_solver.py](#34-cvxpygen_solverpy)
+   - [hybrid_blender.py](#35-hybrid_blenderpy)
+   - [risk_metrics.py](#36-risk_metricspy)
+   - [adaptive_mpc_controller.py](#37-adaptive_mpc_controllerpy)
 4. [Trajectory Module](#4-trajectory-module)
    - [reference_generator.py](#41-reference_generatorpy)
 5. [Logging Module](#5-logging-module)
    - [simulation_logger.py](#51-simulation_loggerpy)
 6. [ROS2 Nodes](#6-ros2-nodes)
 7. [Standalone Simulation](#7-standalone-simulation)
-8. [Advanced Scenarios](#8-advanced-scenarios-new-in-v062)
+8. [Advanced Scenarios](#8-advanced-scenarios)
+9. [Docker and Gazebo Harness](#9-docker-and-gazebo-harness)
+10. [Integration Status and Next Steps](#10-integration-status-and-next-steps)
 
 ---
 
@@ -34,28 +40,45 @@
 │                         Application Layer                        │
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │
 │  │ trajectory_node │  │    lqr_node     │  │    mpc_node     │  │
+│  │                 │  │                 │  │                 │  │
 │  └────────┬────────┘  └────────┬────────┘  └────────┬────────┘  │
-├───────────┼──────────────────────────────────────────┼───────────┤
-│           │            Core Libraries                │           │
-│  ┌────────▼────────────────────────────────────────▼────────┐   │
-│  │                    Controllers Module                     │   │
-│  │    ┌────────────────┐      ┌────────────────────┐        │   │
-│  │    │ LQRController  │      │   MPCController    │        │   │
-│  │    │   (DARE)       │      │    (CVXPY)         │        │   │
-│  │    └───────┬────────┘      └─────────┬──────────┘        │   │
-│  └────────────┼─────────────────────────┼────────────────────┘   │
-│  ┌────────────▼─────────────────────────▼────────────────────┐   │
-│  │                      Models Module                         │   │
-│  │    ┌─────────────────────┐    ┌─────────────────────┐     │   │
-│  │    │ DifferentialDrive   │    │     Linearizer      │     │   │
-│  │    │   (Kinematics)      │◄───┤  (Jacobians, ZOH)   │     │   │
-│  │    └─────────────────────┘    └─────────────────────┘     │   │
-│  └────────────────────────────────────────────────────────────┘   │
-│  ┌─────────────────────────┐  ┌────────────────────────────┐    │
-│  │ ReferenceTrajectory     │  │   SimulationLogger         │    │
-│  │ Generator (Figure-8)    │  │   (CSV/JSON Export)        │    │
-│  └─────────────────────────┘  └────────────────────────────┘    │
-└──────────────────────────────────────────────────────────────────┘
+│           │                    │                     │           │
+│  ┌────────┘  ┌─────────────────┘  ┌──────────────────┘           │
+│  │  ┌────────▼────────┐  ┌───────▼──────────┐  ┌────────────┐  │
+│  │  │ hybrid_node     │  │ kinematic_sim    │  │ Adaptive   │  │
+│  │  │ (ROS2 blending) │  │ (odom bridge)    │  │ MPC node   │  │
+│  │  └────────┬────────┘  └──────────────────┘  │ (standalone wired,
+│  │           │                                  │  ROS planned) │  │
+│  │           │                                  └────────────┘  │
+├──┼───────────┼──────────────────────────────────────────────────┤
+│  │           │            Core Libraries                        │
+│  │  ┌────────▼────────────────────────────────────────────────┐ │
+│  │  │                    Controllers Module                    │ │
+│  │  │  ┌──────────────┐  ┌───────────────┐  ┌──────────────┐ │ │
+│  │  │  │ LQRController│  │ MPCController │  │ Adaptive MPC │ │ │
+│  │  │  │   (DARE)     │  │  (CVXPY)      │  │ (CasADi)     │ │ │
+│  │  │  └──────┬───────┘  └──────┬────────┘  └──────┬───────┘ │ │
+│  │  │         │                 │                   │         │ │
+│  │  │  ┌──────▼─────────────────▼───────────────────▼──────┐  │ │
+│  │  │  │         BlendingSupervisor + RiskMetrics           │  │ │
+│  │  │  └───────────────────────────────────────────────────┘  │ │
+│  │  └─────────────────────────────────────────────────────────┘ │
+│  │  ┌──────────────────────────────────────────────────────┐    │
+│  │  │                   Models Module                       │    │
+│  │  │  ┌──────────────────┐  ┌──────────────────┐          │    │
+│  │  │  │ DifferentialDrive│  │   Linearizer     │          │    │
+│  │  │  │  (Kinematics)    │◄─┤ (Jacobians, ZOH) │          │    │
+│  │  │  └──────────────────┘  └──────────────────┘          │    │
+│  │  │  ┌──────────────────┐                                │    │
+│  │  │  │ ActuatorDynamics │                                │    │
+│  │  │  │ (delay, lag)     │                                │    │
+│  │  │  └──────────────────┘                                │    │
+│  │  └──────────────────────────────────────────────────────┘    │
+│  │  ┌─────────────────────────┐  ┌────────────────────────┐    │
+│  │  │ ReferenceTrajectory     │  │   SimulationLogger     │    │
+│  │  │ Generator               │  │   (CSV/JSON Export)    │    │
+│  │  └─────────────────────────┘  └────────────────────────┘    │
+└──┴──────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -68,8 +91,6 @@
 
 This module implements the nonlinear kinematic model for a two-wheeled differential drive robot.
 
----
-
 #### Data Classes
 
 ##### `RobotState`
@@ -81,10 +102,6 @@ class RobotState:
     theta: float # orientation (radians)
 ```
 
-**Purpose:** Type-safe representation of robot pose. Provides conversion utilities:
-- `to_array()` → Converts to `np.ndarray([px, py, theta])`
-- `from_array(arr)` → Creates `RobotState` from array
-
 ##### `ControlInput`
 ```python
 @dataclass
@@ -93,131 +110,38 @@ class ControlInput:
     omega: float  # angular velocity (rad/s)
 ```
 
-**Purpose:** Type-safe control input representation with the same conversion methods.
-
----
-
 #### Class: `DifferentialDriveRobot`
 
-**Constants:**
-| Constant | Value | Description |
-|----------|-------|-------------|
-| `STATE_DIM` | 3 | State dimension `[px, py, theta]` |
-| `CONTROL_DIM` | 2 | Control dimension `[v, omega]` |
-
----
+**Constants:** `STATE_DIM = 3`, `CONTROL_DIM = 2`
 
 ##### `__init__(self, v_max, omega_max, wheel_base)`
 
-**Parameters:**
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `v_max` | float | 1.0 | Maximum linear velocity (m/s) |
-| `omega_max` | float | 1.5 | Maximum angular velocity (rad/s) |
-| `wheel_base` | float | 0.3 | Distance between wheels (m) |
-
-**Purpose:** Initializes robot parameters for velocity limiting and wheel conversions.
-
----
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `v_max` | 1.0 | Maximum linear velocity (m/s) |
+| `omega_max` | 1.5 | Maximum angular velocity (rad/s) |
+| `wheel_base` | 0.3 | Distance between wheels (m) |
 
 ##### `continuous_dynamics(self, state, control) → np.ndarray`
 
-**Mathematical Foundation:**
-$$
-\dot{x} = f(x, u) = \begin{bmatrix} v \cos\theta \\ v \sin\theta \\ \omega \end{bmatrix}
-$$
-
-**Implementation:**
-```python
-dx = np.array([
-    v * np.cos(theta),  # ṗ_x
-    v * np.sin(theta),  # ṗ_y
-    omega               # θ̇
-])
-```
-
-**Purpose:** Computes instantaneous rate of change of state given current state and control input. This is the core kinematic model.
-
----
+$$\dot{x} = f(x, u) = \begin{bmatrix} v \cos\theta \\ v \sin\theta \\ \omega \end{bmatrix}$$
 
 ##### `simulate_step(self, state, control, dt, method) → np.ndarray`
 
-**Parameters:**
-| Parameter | Description |
-|-----------|-------------|
-| `state` | Current state `[px, py, theta]` |
-| `control` | Control input `[v, omega]` |
-| `dt` | Time step (seconds) |
-| `method` | Integration method: `'euler'` or `'rk4'` |
-
-**Integration Methods:**
-
-1. **Euler (First-Order):**
-$$x_{k+1} = x_k + \Delta t \cdot f(x_k, u_k)$$
-
-2. **Runge-Kutta 4 (Fourth-Order):**
-$$x_{k+1} = x_k + \frac{\Delta t}{6}(k_1 + 2k_2 + 2k_3 + k_4)$$
-
-where:
-- $k_1 = f(x_k, u_k)$
-- $k_2 = f(x_k + 0.5\Delta t \cdot k_1, u_k)$
-- $k_3 = f(x_k + 0.5\Delta t \cdot k_2, u_k)$
-- $k_4 = f(x_k + \Delta t \cdot k_3, u_k)$
-
-**Implementation Details:**
-1. Clips control inputs to `[v_max, omega_max]` bounds
-2. Applies selected integration method
-3. Normalizes theta to `[-π, π]`
-
----
+Integration methods:
+- **Euler:** $x_{k+1} = x_k + \Delta t \cdot f(x_k, u_k)$
+- **RK4:** Fourth-order Runge-Kutta
 
 ##### `simulate_trajectory(self, x0, controls, dt, method) → np.ndarray`
 
-**Purpose:** Simulates full trajectory given initial state and sequence of controls.
-
-**Returns:** Array of shape `(N+1, 3)` where N is number of control steps.
-
----
-
-##### `clip_control(self, control) → np.ndarray`
-
-**Purpose:** Enforces actuator limits:
-$$v \in [-v_{max}, v_{max}], \quad \omega \in [-\omega_{max}, \omega_{max}]$$
-
----
-
-##### `normalize_angle(angle) → float` (static)
-
-**Algorithm:**
-```python
-while angle > π:   angle -= 2π
-while angle < -π:  angle += 2π
-```
-
-**Purpose:** Wraps angle to `[-π, π]` range for consistent comparisons.
-
----
-
-##### `compute_tracking_error(self, state, state_ref) → np.ndarray`
-
-**Purpose:** Computes error with proper angle wrapping on the theta component.
-
-**Returns:** `error = [px - px_ref, py - py_ref, normalize(theta - theta_ref)]`
-
----
+Returns array of shape `(N+1, 3)`.
 
 ##### `get_wheel_velocities(self, v, omega) → Tuple[float, float]`
 
-**Differential Drive Kinematics:**
 $$v_L = v - \frac{L}{2}\omega, \quad v_R = v + \frac{L}{2}\omega$$
-
-where $L$ is the wheel base.
-
----
 
 ##### `from_wheel_velocities(self, v_left, v_right) → Tuple[float, float]`
 
-**Inverse Kinematics:**
 $$v = \frac{v_R + v_L}{2}, \quad \omega = \frac{v_R - v_L}{L}$$
 
 ---
@@ -226,168 +150,48 @@ $$v = \frac{v_R + v_L}{2}, \quad \omega = \frac{v_R - v_L}{L}$$
 
 **Location:** `src/hybrid_controller/hybrid_controller/models/linearization.py`
 
-This module computes Jacobian-based linearization and discretization for controller design.
-
----
-
 #### Class: `Linearizer`
-
-##### `__init__(self, dt)`
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `dt` | 0.02 | Sampling time $T_s$ (seconds) |
-
----
 
 ##### `get_jacobians(self, v_r, theta_r) → Tuple[np.ndarray, np.ndarray]`
 
-**Mathematical Derivation:**
+$$A = \begin{bmatrix} 0 & 0 & -v_r \sin\theta_r \\ 0 & 0 & v_r \cos\theta_r \\ 0 & 0 & 0 \end{bmatrix}, \quad
+B = \begin{bmatrix} \cos\theta_r & 0 \\ \sin\theta_r & 0 \\ 0 & 1 \end{bmatrix}$$
 
-Given the nonlinear dynamics $\dot{x} = f(x, u)$, we compute Jacobians at the operating point $(x_r, u_r)$:
+##### `discretize_euler(self, A, B) → Tuple`
 
-$$
-A = \frac{\partial f}{\partial x}\bigg|_{(x_r, u_r)} = \begin{bmatrix}
-0 & 0 & -v_r \sin\theta_r \\
-0 & 0 & v_r \cos\theta_r \\
-0 & 0 & 0
-\end{bmatrix}
-$$
+$A_d \approx I + A \cdot T_s$, $B_d \approx B \cdot T_s$
 
-$$
-B = \frac{\partial f}{\partial u}\bigg|_{(x_r, u_r)} = \begin{bmatrix}
-\cos\theta_r & 0 \\
-\sin\theta_r & 0 \\
-0 & 1
-\end{bmatrix}
-$$
+##### `discretize_exact(self, A, B) → Tuple`
 
-**Physical Interpretation:**
-- The A matrix captures how small changes in state affect the dynamics
-- The `(0,2)` and `(1,2)` entries show coupling between orientation and position change rate
-- B matrix shows how velocity and angular velocity inputs affect each state
+Uses matrix exponential: $A_d = e^{A \cdot T_s}$
+
+##### `get_discrete_model_explicit(self, v_r, theta_r) → Tuple`
+
+Direct ZOH computation (most efficient).
+
+##### `build_prediction_matrices(A_d, B_d, N) → Tuple` (static)
+
+Constructs batch prediction: $X = \Phi \cdot x_0 + \Gamma \cdot U$
 
 ---
 
-##### `discretize_euler(self, A, B) → Tuple[np.ndarray, np.ndarray]`
-
-**First-Order Approximation (Zero-Order Hold):**
-
-$$A_d \approx I + A \cdot T_s$$
-$$B_d \approx B \cdot T_s$$
-
-**When to Use:** Valid for sufficiently small $T_s$ where higher-order terms are negligible.
-
----
-
-##### `discretize_exact(self, A, B) → Tuple[np.ndarray, np.ndarray]`
-
-**Exact Matrix Exponential Method:**
-
-$$A_d = e^{A \cdot T_s}$$
-$$B_d = \int_0^{T_s} e^{A\tau} d\tau \cdot B$$
-
-**Implementation:** Uses augmented matrix method:
-```python
-augmented = [[A*dt,  B*dt],
-             [0,     0   ]]
-exp_aug = expm(augmented)
-A_d = exp_aug[:n, :n]
-B_d = exp_aug[:n, n:]
-```
-
-**When to Use:** For higher accuracy when dt is not extremely small.
-
----
-
-##### `get_discrete_model_explicit(self, v_r, theta_r) → Tuple[np.ndarray, np.ndarray]`
-
-**Direct Computation (from LaTeX document):**
-
-$$
-A_d = \begin{bmatrix}
-1 & 0 & -v_r \sin\theta_r \cdot T_s \\
-0 & 1 & v_r \cos\theta_r \cdot T_s \\
-0 & 0 & 1
-\end{bmatrix}
-$$
-
-$$
-B_d = \begin{bmatrix}
-\cos\theta_r \cdot T_s & 0 \\
-\sin\theta_r \cdot T_s & 0 \\
-0 & T_s
-\end{bmatrix}
-$$
-
-**Purpose:** Most efficient method, directly computes discrete matrices without intermediate steps.
-
----
-
-##### `predict_trajectory(self, x0, controls, v_refs, theta_refs) → np.ndarray`
-
-**Linear Time-Varying (LTV) Prediction:**
-
-For each time step, uses different linearization point:
-```python
-for k in range(N):
-    A_d, B_d = get_discrete_model_explicit(v_refs[k], theta_refs[k])
-    trajectory[k+1] = A_d @ trajectory[k] + B_d @ controls[k]
-```
-
-**Use Case:** More accurate prediction along curved trajectories where operating point varies.
-
----
-
-##### `build_prediction_matrices(A_d, B_d, N) → Tuple[np.ndarray, np.ndarray]` (static)
-
-**Purpose:** Constructs batch prediction matrices for MPC:
-
-$$X = \Phi \cdot x_0 + \Gamma \cdot U$$
-
-where:
-- $X = [x_1, x_2, ..., x_N]^T$ (stacked states)
-- $U = [u_0, u_1, ..., u_{N-1}]^T$ (stacked controls)
-
-**Matrix Structure:**
-
-$$\Phi = \begin{bmatrix} A_d \\ A_d^2 \\ \vdots \\ A_d^N \end{bmatrix}, \quad
-\Gamma = \begin{bmatrix}
-B_d & 0 & \cdots & 0 \\
-A_d B_d & B_d & \cdots & 0 \\
-\vdots & & \ddots & \\
-A_d^{N-1} B_d & A_d^{N-2} B_d & \cdots & B_d
-\end{bmatrix}$$
-
----
-
----
-### 2.3 actuator_dynamics.py (New in v0.6.2)
+### 2.3 actuator_dynamics.py
 
 **Location:** `src/hybrid_controller/hybrid_controller/models/actuator_dynamics.py`
 
-Models physical hardware limitations to bridge the sim-to-real gap.
+Models physical hardware limitations for sim-to-real fidelity.
 
 #### Class: `ActuatorDynamics`
 
-**Mathematical Model:**
-1. **Control Latency (Delay)**: Modeled as a circular buffer of length $d$.
-   $$u_{delayed}[k] = u_{cmd}[k-d]$$
+| Component | Model |
+|-----------|-------|
+| Control latency | Circular buffer delay: $u_{\text{delayed}}[k] = u_{\text{cmd}}[k-d]$ |
+| Actuator lag | First-order: $\tau\dot{v} + v = v_{\text{cmd}}$, Euler-discretized |
+| Execution noise | Additive Gaussian: $u_{\text{applied}} = u_{\text{lagged}} + \mathcal{N}(0,\sigma^2)$ |
 
-2. **Actuator Lag (First-Order)**:
-   $$\tau \dot{v} + v = v_{cmd}$$
-   Discretized via Euler integration:
-   $$v[k+1] = v[k] + \frac{\Delta t}{\tau} (v_{cmd} - v[k])$$
+**Key Parameters:** `tau_v`, `tau_omega` (time constants), `delay_steps` (e.g. 2 = 40ms), `noise_std`
 
-3. **Execution Noise**:
-   $$u_{applied} = u_{lagged} + \mathcal{N}(0, \sigma^2)$$
-
-**Key Parameters**:
-- `tau_v`, `tau_omega`: Time constants (e.g., 0.1s)
-- `delay_steps`: Number of timesteps delay (e.g., 2 steps = 40ms)
-- `noise_std`: Standard deviation of additive Gaussian noise
-
---- 
+---
 
 ## 3. Controllers Module
 
@@ -395,84 +199,26 @@ Models physical hardware limitations to bridge the sim-to-real gap.
 
 **Location:** `src/hybrid_controller/hybrid_controller/controllers/lqr_controller.py`
 
-Implements discrete-time LQR for trajectory tracking using DARE (Discrete Algebraic Riccati Equation).
-
----
-
 #### Class: `LQRController`
 
 ##### `__init__(self, Q_diag, R_diag, dt, v_max, omega_max)`
 
-**Parameters:**
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `Q_diag` | [10, 10, 1] | State error weights $[q_x, q_y, q_\theta]$ |
-| `R_diag` | [0.1, 0.1] | Control effort weights $[r_v, r_\omega]$ |
-| `dt` | 0.02 | Sampling time |
-| `v_max` | 1.0 | Linear velocity limit |
-| `omega_max` | 1.5 | Angular velocity limit |
+| `Q_diag` | [10, 10, 1] | State error weights |
+| `R_diag` | [0.1, 0.1] | Control effort weights |
 
-**Cost Matrices:**
-$$Q = \text{diag}(q_x, q_y, q_\theta), \quad R = \text{diag}(r_v, r_\omega)$$
+##### `compute_gain(self, v_r, theta_r) → np.ndarray`
 
-**Design Insight:**
-- Higher Q values → more aggressive error correction
-- Higher R values → smoother, slower control
-
----
-
-##### `compute_gain(self, v_r, theta_r, force_recompute) → np.ndarray`
-
-**DARE Solution:**
-
-Solves the Discrete Algebraic Riccati Equation:
+Solves the DARE:
 $$P = A_d^T P A_d - A_d^T P B_d (R + B_d^T P B_d)^{-1} B_d^T P A_d + Q$$
-
-**Optimal Gain Computation:**
 $$K = (R + B_d^T P B_d)^{-1} B_d^T P A_d$$
 
-**Implementation Details:**
-1. Uses operating point caching to avoid redundant computation
-2. Handles $v_r = 0$ edge case (uncontrollable system)
-3. Falls back to proportional gain if DARE fails
-
-```python
-# Solve DARE using scipy
-P = solve_discrete_are(A_d, B_d, Q, R)
-
-# Compute optimal gain
-BtPB = B_d.T @ P @ B_d
-BtPA = B_d.T @ P @ A_d
-K = np.linalg.solve(R + BtPB, BtPA)
-```
-
----
+Uses operating-point caching; falls back to proportional gain if DARE fails.
 
 ##### `compute_control(self, x, x_ref, u_ref, K) → np.ndarray`
 
-**LQR Control Law:**
-
-$$\tilde{x}_k = x_k - x_{r,k}$$
-$$\tilde{u}_k = -K \cdot \tilde{x}_k$$
-$$u_k = u_{r,k} + \tilde{u}_k$$
-
-**Implementation Steps:**
-1. Compute tracking error with angle normalization
-2. Apply feedback gain: $\tilde{u} = -K \cdot \tilde{x}$
-3. Add to reference control
-4. Clip to actuator limits
-
----
-
-##### `compute_control_at_operating_point(self, x, x_ref, u_ref) → Tuple`
-
-**Purpose:** Convenience method that recomputes gain at current operating point and returns both control and error.
-
----
-
-##### `set_weights(self, Q_diag, R_diag)`
-
-**Purpose:** Runtime parameter modification for adaptive control. Invalidates cached gain.
+$$u_k = u_{r,k} - K \cdot (x_k - x_{r,k})$$
 
 ---
 
@@ -480,354 +226,164 @@ $$u_k = u_{r,k} + \tilde{u}_k$$
 
 **Location:** `src/hybrid_controller/hybrid_controller/controllers/mpc_controller.py`
 
-Implements MPC with obstacle avoidance using CVXPY for convex optimization.
-
----
-
 #### Data Classes
 
-##### `Obstacle`
 ```python
 @dataclass
 class Obstacle:
-    x: float       # x-position (meters)
-    y: float       # y-position (meters)
-    radius: float  # obstacle radius (meters)
-```
+    x: float; y: float; radius: float
 
-**Methods:**
-- `distance_to(px, py)` → Euclidean distance from point to obstacle center
-- `is_collision(px, py, d_safe)` → Checks if point is within safety distance
-
-##### `MPCSolution`
-```python
 @dataclass
 class MPCSolution:
-    status: str                 # "optimal", "fallback", etc.
-    optimal_control: np.ndarray # First control u_0
-    control_sequence: np.ndarray # Full sequence (N, 2)
-    predicted_states: np.ndarray # Trajectory (N+1, 3)
-    cost: float                 # Optimal cost value
-    solve_time_ms: float        # Solver time
-    slack_used: bool            # Soft constraint activation
-    iterations: int             # Solver iterations
+    status: str; optimal_control: np.ndarray; control_sequence: np.ndarray
+    predicted_states: np.ndarray; cost: float; solve_time_ms: float
+    slack_used: bool; iterations: int
 ```
-
----
 
 #### Class: `MPCController`
 
-##### `__init__(self, horizon, Q_diag, R_diag, P_diag, S_diag, J_diag, d_safe, slack_penalty, v_max, omega_max, dt, solver, block_size, w_max)`
+##### Key Parameters
 
-**Key Parameters:**
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `horizon` | 10 | Prediction horizon N |
-| `P_diag` | [20, 20, 40] | Terminal cost (higher for stability) |
-| `S_diag` | [0.1, 0.5] | 1st-order control rate-of-change weights (Δu penalty). Penalizes `u[k] - u[k-1]` to reduce control jumps. Reference: Rawlings et al., *Model Predictive Control*, Ch. 1.3 |
-| `J_diag` | None | **2nd-order jerk penalty weights (NEW in v0.6.3).** Penalizes `u[k] - 2*u[k-1] + u[k-2]` (discrete acceleration). Reduces control jerk for smoother maneuvers. Set to `None` to disable. Recommended: `[0.05, 0.3]` (moderate angular jerk suppression). |
-| `d_safe` | 0.3 | Safety distance from obstacles (m) |
-| `slack_penalty` | 5000 | Weight ρ for soft constraints |
-| `solver` | "OSQP" | CVXPY solver backend |
-| `block_size` | 1 | Move-blocking size |
-| `w_max` | 0.05 | Tube MPC disturbance bound (m) |
+| `P_diag` | [20, 20, 40] | Terminal cost |
+| `S_diag` | [0.1, 0.5] | 1st-order Δu penalty |
+| `J_diag` | None | 2nd-order jerk penalty (recommended: [0.05, 0.3]) |
+| `d_safe` | 0.3 | Safety distance (m) |
+| `slack_penalty` | 5000 | Soft constraint weight ρ |
+| `w_max` | 0.05 | Tube MPC disturbance bound |
 
-**Adaptive Weight Scheduling (v0.5.0):**
+##### `solve(self, x0, x_refs, u_refs, obstacles) → MPCSolution`
 
-During the first `_ramp_up_steps` (default 10) time steps, the heading weight `Q[2,2]` is scaled by a factor that decays linearly from 2.0 to 1.0. This prioritizes heading alignment during the transient startup phase, at a modest cost to position tracking accuracy. Reference: MDPI Sensors 2024, "Improved MPC with adaptive weight adjustment."
+**Cost:**
+$$\min \sum_{k=0}^{N-1} \left( \|x_k - x_k^{\text{ref}}\|_Q^2 + \|u_k\|_R^2 + \|u_k - u_{k-1}\|_S^2 + \|u_k - 2u_{k-1} + u_{k-2}\|_J^2 \right) + \|x_N - x_N^{\text{ref}}\|_P^2$$
 
----
+**Obstacle constraints:** Linearized half-plane (DCP-compliant):
+$$n_x(x_k - x_{\text{obs}}) + n_y(y_k - y_{\text{obs}}) \geq d_{\text{safe}} + r_{\text{obs}} - \epsilon_k$$
 
-##### `solve(self, x0, x_refs, u_refs, obstacles, use_soft_constraints) → MPCSolution`
+##### `solve_with_ltv` — Linear Time-Varying variant with per-step linearization
 
-**Optimization Problem:**
-
-$$\min_{u_0, ..., u_{N-1}} \sum_{k=0}^{N-1} \left( \|x_k - x_{ref,k}\|_Q^2 + \|u_k\|_R^2 + \|u_k - u_{k-1}\|_S^2 + \|u_k - 2u_{k-1} + u_{k-2}\|_J^2 \right) + \|x_N - x_{ref,N}\|_P^2$$
-
-subject to:
-$$x_{k+1} = A_d x_k + B_d u_k \quad \text{(dynamics)}$$
-$$|v_k| \leq v_{max}, \quad |\omega_k| \leq \omega_{max} \quad \text{(actuator limits)}$$
-$$\|p_k - p_{obs}\| \geq d_{safe} + r_{obs} + w_{max} \quad \text{(obstacle avoidance, Tube MPC)}$$
-
-- **S term (1st-order):** Penalizes control rate-of-change `Δu = u[k] - u[k-1]`, producing smoother trajectories.
-- **J term (2nd-order, v0.6.3):** Penalizes control jerk `u[k] - 2*u[k-1] + u[k-2]` (discrete second derivative). This directly minimizes jerk — the primary smoothness metric for hybrid blending — by penalizing aggressive changes in the rate of change itself.
-
-**CVXPY Implementation:**
-
-```python
-# Decision variables
-x = cp.Variable((N+1, 3))  # States
-u = cp.Variable((N, 2))    # Controls
-slack = cp.Variable(N * len(obstacles), nonneg=True)
-
-# Cost function
-cost = 0
-for k in range(N):
-    cost += cp.quad_form(x[k] - x_refs[k], Q)
-    cost += cp.quad_form(u[k], R)
-    if k > 0:  # 1st-order: control rate penalty
-        cost += cp.quad_form(u[k] - u[k-1], S)
-    if J is not None and k > 1:  # 2nd-order: jerk penalty (v0.6.3)
-        cost += cp.quad_form(u[k] - 2*u[k-1] + u[k-2], J)
-cost += cp.quad_form(x[N] - x_refs[N], P)
-cost += slack_penalty * cp.sum_squares(slack)  # Soft constraint penalty
-
-# Constraints
-constraints = [x[0] == x0]  # Initial state
-for k in range(N):
-    constraints.append(x[k+1] == A_d @ x[k] + B_d @ u[k])
-    constraints.append(u[k, 0] >= -v_max)
-    constraints.append(u[k, 0] <= v_max)
-    constraints.append(u[k, 1] >= -omega_max)
-    constraints.append(u[k, 1] <= omega_max)
-```
+##### `get_warm_start` — Shifts previous solution forward
 
 ---
 
-##### Obstacle Avoidance Constraints
-
-**Linearization Approach:**
-
-The nonlinear constraint $\|p - p_{obs}\| \geq d_{safe}$ is non-convex. We linearize around the reference trajectory:
-
-$$n_x (x_k - x_{obs}) + n_y (y_k - y_{obs}) \geq d_{safe} + r_{obs} - \epsilon_k$$
-
-where:
-- $(n_x, n_y)$ = unit normal from obstacle to linearization point
-- $\epsilon_k \geq 0$ is a slack variable
-
-**Implementation:**
-```python
-# Direction from obstacle to linearization point
-dx = px_lin - obs.x
-dy = py_lin - obs.y
-dist = np.sqrt(dx**2 + dy**2)
-nx, ny = dx/dist, dy/dist
-
-# Half-space constraint
-constraints.append(
-    nx * (x[k,0] - obs.x) + ny * (x[k,1] - obs.y)
-    >= safe_dist - slack[slack_idx]
-)
-```
-
----
-
-##### `solve_with_ltv(self, x0, x_refs, u_refs, obstacles, use_soft_constraints) → MPCSolution`
-
-**Linear Time-Varying MPC:**
-
-Uses different linearization points at each prediction step:
-```python
-for k in range(N):
-    v_r = u_refs[k, 0]
-    theta_r = x_refs[k, 2]
-    A_d, B_d = linearizer.get_discrete_model_explicit(v_r, theta_r)
-    constraints.append(x[k+1] == A_d @ x[k] + B_d @ u[k])
-```
-
-**Advantage:** More accurate for curved trajectories with varying operating points.
-
----
-
-##### `get_warm_start(self) → Optional[np.ndarray]`
-
-**Warm-Start Strategy:**
-
-Shifts previous solution forward:
-$$u_0^{warm} = u_1^{prev}, \quad u_1^{warm} = u_2^{prev}, \quad ..., \quad u_{N-1}^{warm} = u_{N-1}^{prev}$$
-
-**Purpose:** Reduces solver iterations and improves convergence.
-
----
-
-##### `_get_fallback_solution(self, x0, x_refs, u_refs, solve_time) → MPCSolution`
-
-**Fallback Control:**
-
-When optimization fails, uses simple proportional control:
-```python
-K_p = [[1.0, 0.0, 0.0],
-       [0.0, 0.0, 0.5]]
-u_fallback = u_refs[0] - K_p @ error
-```
-
----
-
-##### Advanced Features (v0.3.0)
-
-**1. Move-Blocking:**
-Reduces computational complexity by holding control inputs constant over multiple time steps.
-- `block_size`: Number of steps to hold control constant
-- Reduces decision variables from $N \times m$ to $\lceil N/B \rceil \times m$
-- Significantly reduces solve time (e.g., 135ms → 35ms)
-
-**2. Cold-Start Handling:**
-Mitigates heading spikes when starting from rest:
-- `reset()`: Clears internal state history
-- **Ramp-up**: Limits angular velocity during first $N$ steps to prevent aggressive corrections due to linearization errors at low speeds.
-
----
-
-### 3.3 yaw_stabilizer.py (New in v0.3.0)
+### 3.3 yaw_stabilizer.py
 
 **Location:** `src/hybrid_controller/hybrid_controller/controllers/yaw_stabilizer.py`
 
-Implements a dedicated PID controller for heading stabilization during critical transients.
+PID heading controller with derivative smoothing, anti-windup, and angle wrapping.
 
-#### Class: `YawStabilizer`
-
-##### `__init__(self, kp, ki, kd, dt, omega_max)`
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `kp` | 2.0 | Proportional gain |
-| `ki` | 0.0 | Integral gain |
-| `kd` | 0.1 | Derivative gain |
-
-##### `compute(self, current_yaw, target_yaw, feedforward_omega)`
-
-**Control Law:**
-$$e_\theta = \text{normalize}(\theta_{target} - \theta_{current})$$
-$$\omega_{cmd} = K_p e_\theta + K_i \int e_\theta + K_d \dot{e}_\theta + \omega_{ff}$$
-
-**Features:**
-- **Derivative Smoothing**: Uses low-pass filter on derivative term
-- **Anti-Windup**: Clamps integral term
-- **Angle Wrapping**: Handles $\pm \pi$ discontinuities correctly
+$$\omega_{\text{cmd}} = K_p e_\theta + K_i \int e_\theta + K_d \dot{e}_\theta + \omega_{ff}$$
 
 ---
 
-### 3.4 cvxpygen_solver.py (New in v0.6.3)
+### 3.4 cvxpygen_solver.py
 
 **Location:** `src/hybrid_controller/hybrid_controller/controllers/cvxpygen_solver.py`
 
-Parametrized MPC solver wrapper that achieves **38x speedup** (4.7ms vs 180ms) by avoiding CVXPY re-canonicalization overhead. Uses CVXPYgen compiled C code when available, with graceful CVXPY fallback.
-
-**Key Insight**: The original MPC rebuilt the CVXPY problem from scratch every timestep, incurring ~170ms of parsing/canonicalization. The parametrized approach uses `cp.Parameter` for changing data (x0, A_d, B_d, x_ref), so canonicalization happens only once.
-
-#### Class: `CVXPYgenWrapper`
-
-##### `__init__(self, horizon, nx, nu, Q_diag, R_diag, P_diag, S_diag, J_diag, ...)`
-
-Creates a parametrized CVXPY problem with the same cost structure as `MPCController` (Q, R, S, J penalties).
-
-##### `solve_fast(self, x0, x_refs, A_d, B_d) → FastMPCSolution`
-
-Dual-path solver:
-1. **Fast path**: Uses CVXPYgen compiled C solver (`method='CPG'`)
-2. **Fallback**: Uses interpreted CVXPY with warm-start
-
-##### `benchmark(self, n_solves=50) → Dict`
-
-Benchmarks solve time over random problems. Returns mean, std, min, max, median times.
+Parametrized MPC solver achieving **38× speedup** (4.7ms vs 180ms) by avoiding CVXPY re-canonicalization. Uses `cp.Parameter` for time-varying data; canonicalization happens once.
 
 | Benchmark (N=5, OSQP) | Value |
 |------------------------|-------|
 | Mean solve time | 4.7ms |
 | Median | 3.4ms |
 | Min | 1.9ms |
-| Speedup vs original | **38x** |
-
-Reference: Schaller, M., Banjac, G., Boyd, S. (2022). "Embedded Code Generation with CVXPY." *IEEE CSL*.
+| Speedup vs original | **38×** |
 
 ---
 
-### 3.5 hybrid_blender.py (New in v0.6.0)
+### 3.5 hybrid_blender.py
 
 **Location:** `src/hybrid_controller/hybrid_controller/controllers/hybrid_blender.py`
 
-Implements continuous control arbitration between LQR and MPC using a smooth blending law with anti-chatter guarantees.
-
----
-
-#### Data Class: `BlendInfo`
-
-```python
-@dataclass
-class BlendInfo:
-    weight: float          # w(t) in [0, 1]: 0=LQR, 1=MPC
-    weight_raw: float      # Pre-filtered sigmoid output
-    risk: float            # Combined risk input
-    mode: str              # 'LQR_DOMINANT', 'BLENDED', 'MPC_DOMINANT'
-    dw_dt: float           # Rate of weight change
-    feasibility_ok: bool   # MPC feasibility status
-    solver_time_ms: float  # MPC solver time
-```
-
----
-
 #### Class: `BlendingSupervisor`
 
-##### `__init__(self, k_sigmoid, risk_threshold, dw_max, hysteresis_band, solver_time_limit, feasibility_decay, dt)`
+##### Parameters
 
-**Parameters:**
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `k_sigmoid` | 10.0 | Sigmoid steepness (higher = sharper transition) |
-| `risk_threshold` | 0.3 | Risk level at sigmoid midpoint ($w = 0.5$) |
-| `dw_max` | 2.0 | Maximum $|dw/dt|$ in s$^{-1}$ (anti-chatter) |
-| `hysteresis_band` | 0.05 | Half-width of deadband around threshold |
-| `solver_time_limit` | 5.0 | MPC solver time limit (ms) |
-| `feasibility_decay` | 0.8 | Decay factor when MPC infeasible |
-| `feasibility_margin_threshold` | 0.1 | Slack magnitude threshold for w reduction |
-| `dt` | 0.02 | Simulation timestep |
-
----
+| `k_sigmoid` | 10.0 | Sigmoid steepness |
+| `risk_threshold` | 0.3 | Sigmoid midpoint |
+| `dw_max` | 2.0 | Max weight rate (s⁻¹) |
+| `hysteresis_band` | 0.05 | Deadband half-width |
 
 ##### Blending Pipeline
 
-The weight $w(t)$ is computed through a 4-stage pipeline:
+$$\text{risk} \xrightarrow{\text{sigmoid}} w_{\text{raw}} \xrightarrow{\text{hysteresis}} w_{\text{hyst}} \xrightarrow{\text{rate limit}} w_{\text{lim}} \xrightarrow{\text{feasibility}} w(t)$$
 
-$$\text{risk} \xrightarrow{\text{sigmoid}} w_{raw} \xrightarrow{\text{hysteresis}} w_{hyst} \xrightarrow{\text{rate limit}} w_{lim} \xrightarrow{\text{feasibility}} w(t)$$
+1. **Sigmoid:** $w_{\text{raw}} = \sigma(k(r - r_{\text{th}}))$
+2. **Hysteresis:** hold if $r \in [r_{\text{th}} - h, r_{\text{th}} + h]$
+3. **Rate limit:** $w = \text{clip}(w_{\text{hyst}},\; w_{\text{prev}} \pm \dot{w}_{\max}\Delta t)$
+4. **Feasibility fallback:** exponential ramp-down on consecutive MPC failures
 
-**Stage 1 — Sigmoid mapping:**
-$$w_{raw} = \sigma(k \cdot (r - r_{th})) = \frac{1}{1 + e^{-k(r - r_{th})}}$$
-
-**Stage 2 — Hysteresis deadband:**
-If $r \in [r_{th} - h, r_{th} + h]$, hold $w = w_{prev}$. Prevents oscillatory switching near the threshold.
-
-**Stage 3 — Rate limiting (anti-chatter guarantee):**
-$$w_{lim} = \text{clip}(w_{hyst}, \; w_{prev} - \dot{w}_{max} \cdot \Delta t, \; w_{prev} + \dot{w}_{max} \cdot \Delta t)$$
-
-Guarantees Lipschitz continuity of $w(t)$ and bounded control rate.
-
-**Stage 4 — Feasibility fallback with consecutive escalation:**
-
-Degradation escalates with consecutive MPC failures:
-- 1 failure: $w \leftarrow w \cdot \lambda$
-- 2 consecutive: $w \leftarrow w \cdot \lambda^2$
-- $n$ consecutive: $w \leftarrow w \cdot \lambda^n$ (exponential ramp-down to LQR)
-
-Also responds to high **feasibility margin** (slack usage from MPC solution):
-- If `slack_magnitude > feasibility_margin_threshold`: proportional $w$ reduction (up to 30%)
-- Consecutive counter is not reset on high-slack events (treated as early warning)
+**Output:** $u_{\text{blend}} = w \cdot u_{\text{MPC}} + (1-w) \cdot u_{\text{LQR}}$
 
 ---
 
-##### `blend(self, u_lqr, u_mpc, risk, solver_status, solver_time_ms) -> (u_blend, BlendInfo)`
+### 3.6 risk_metrics.py
 
-**Convex Combination:**
-$$u_{blend} = w \cdot u_{MPC} + (1 - w) \cdot u_{LQR}$$
+**Location:** `src/hybrid_controller/hybrid_controller/controllers/risk_metrics.py`
 
-**Property:** If $\|u_{LQR}\| \leq u_{max}$ and $\|u_{MPC}\| \leq u_{max}$, then $\|u_{blend}\| \leq u_{max}$ (convexity).
+Computes geometric risk from current obstacle positions and optional predicted robot states. Current risk model is static-obstacle-centric; uncertainty-aware prediction is planned.
 
 ---
 
-##### `get_statistics(self) -> Dict`
+### 3.7 adaptive_mpc_controller.py
 
-Returns:
-```python
-{
-    'weight_mean': float,
-    'weight_std': float,
-    'total_switches': int,        # Times w crossed 0.5
-    'infeasible_count': int,
-    'lqr_dominant_fraction': float,  # w < 0.1
-    'mpc_dominant_fraction': float,  # w > 0.9
-    'blended_fraction': float,       # 0.1 <= w <= 0.9
-}
-```
+**Location:** `src/hybrid_controller/hybrid_controller/controllers/adaptive_mpc_controller.py`
+
+Implements a nonlinear MPC with online parameter adaptation. Uses CasADi + IPOPT
+instead of CVXPY/OSQP.
+
+#### Class: `LMSAdaptation`
+
+Online parameter estimation using projected gradient descent on one-step prediction error:
+
+$$\hat{x}_{k+1} = x_k + dt \begin{bmatrix} \hat{\theta}_v v_k \cos\theta_k \\ \hat{\theta}_v v_k \sin\theta_k \\ \hat{\theta}_\omega \omega_k \end{bmatrix}$$
+
+$$\Phi_k = dt \begin{bmatrix} v_k\cos\theta_k & 0 \\ v_k\sin\theta_k & 0 \\ 0 & \omega_k \end{bmatrix}$$
+
+$$\hat{\theta}_{k+1} = \text{clip}\!\left(\hat{\theta}_k + \Gamma \Phi_k^\top (x_{\text{meas}} - \hat{x}_{k+1}),\; [0.5, 0.5],\; [2.0, 2.0]\right)$$
+
+Adaptation gain: $\Gamma = 0.005 \cdot I$
+
+**Key property:** cumulative tracking error scales linearly with noise energy (Koehler, 2025).
+
+#### Class: `AdaptiveMPCController`
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `prediction_horizon` | 10 | Free control steps N |
+| `terminal_horizon` | 5 | LQR rollout steps M |
+| `Q_diag` | [30, 30, 5] | State cost |
+| `R_diag` | [0.1, 0.1] | Control cost |
+| `omega_term` | 10.0 | Terminal weight multiplier |
+| `q_xi` | 1000.0 | Slack penalty |
+| `adaptation_gamma` | 0.005 | LMS learning rate |
+
+**Key differences from `MPCController`:**
+
+| Feature | MPC (CVXPY) | Adaptive MPC (CasADi) |
+|---------|-------------|----------------------|
+| Solver | OSQP (QP) | IPOPT (NLP) |
+| Obstacle constraints | Linearised half-plane | Exact Euclidean norm |
+| Horizon | N=5 (0.1s) | N+M=15 (0.3s) |
+| Model parameters | Fixed | Online LMS estimation |
+| Terminal controller | Cost matrix P | LQR rollout equality constraints |
+| Typical solve time | 2.5ms | 20-80ms |
+| Slack variables | Shared | Per-state $\xi_k$ |
+
+**Cost function:**
+$$J = \sum_{k=0}^{N-1}\!\left(\|x_k - x_k^{\text{ref}}\|_Q^2 + \|u_k - u_k^{\text{ref}}\|_R^2 + q_\xi\|\xi_k\|^2\right) + \omega\sum_{k=N}^{N+M}\!\left(\cdots\right) + \omega\|x_{N+M} - x_{N+M}^{\text{ref}}\|_Q^2$$
+
+**Solver setup:** CasADi symbolic NLP with IPOPT backend, warm-start support,
+and per-state obstacle avoidance constraints using exact distance norms.
+
+**Integration status:** The controller is fully implemented and now wired into
+standalone simulation through `--mode adaptive` and
+`--mode hybrid_adaptive` in `run_simulation.py`. Statistical evaluation runner
+integration remains open.
 
 ---
 
@@ -837,95 +393,37 @@ Returns:
 
 **Location:** `src/hybrid_controller/hybrid_controller/trajectory/reference_generator.py`
 
-Generates Figure-8 (Lemniscate) reference trajectories for benchmarking.
-
----
-
-#### Data Class: `TrajectoryPoint`
-
-```python
-@dataclass
-class TrajectoryPoint:
-    t: float      # Time (seconds)
-    px: float     # x-position
-    py: float     # y-position
-    theta: float  # orientation
-    v: float      # linear velocity
-    omega: float  # angular velocity
-```
-
----
-
 #### Class: `ReferenceTrajectoryGenerator`
-
-##### `__init__(self, A, a, dt)`
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `A` | 2.0 | Spatial amplitude (meters) |
+| `A` | 2.0 | Spatial amplitude (m) |
 | `a` | 0.5 | Angular frequency (rad/s) |
-| `dt` | 0.02 | Sampling time (seconds) |
+| `dt` | 0.02 | Sampling time (s) |
 
----
+**Figure-8 parametric equations:**
+$$p_x(t) = A\sin(at), \quad p_y(t) = \frac{A}{2}\sin(2at)$$
 
-##### `position(self, t) → Tuple[float, float]`
+**Supported trajectory families:**
 
-**Figure-8 Parametric Equations:**
-$$p_x(t) = A \sin(at)$$
-$$p_y(t) = A \sin(at) \cos(at) = \frac{A}{2} \sin(2at)$$
-
----
-
-##### `velocity(self, t) → Tuple[float, float]`
-
-**Time Derivatives:**
-$$\dot{p}_x(t) = aA \cos(at)$$
-$$\dot{p}_y(t) = aA(\cos^2(at) - \sin^2(at)) = aA \cos(2at)$$
-
----
-
-##### `heading(self, t) → float`
-
-$$\theta(t) = \text{atan2}(\dot{p}_y, \dot{p}_x)$$
-
----
-
-##### `linear_velocity(self, t) → float`
-
-$$v(t) = \sqrt{\dot{p}_x^2 + \dot{p}_y^2}$$
-
----
-
-##### `angular_velocity(self, t) → float`
-
-**Numerical Differentiation:**
-$$\omega(t) \approx \frac{\theta(t + \Delta t) - \theta(t)}{\Delta t}$$
-
-Includes angle wrapping to handle $\pm\pi$ discontinuities.
-
----
+| Family | Description |
+|--------|-------------|
+| `figure8` | Default Lissajous figure-8 |
+| `circle` | Simple circular path |
+| `clover` | Three-lobed clover pattern |
+| `slalom` | S-curve slalom |
+| `checkpoint_path` | Waypoint-based path with presets (e.g. `warehouse`) |
 
 ##### `generate(self, duration) → np.ndarray`
 
-**Output Format:** Array of shape `(N, 6)`:
-| Column | Content |
-|--------|---------|
-| 0 | time |
-| 1 | px |
-| 2 | py |
-| 3 | theta |
-| 4 | v |
-| 5 | omega |
-
----
+Output shape `(N, 6)`: `[time, px, py, theta, v, omega]`
 
 ##### `get_trajectory_segment(self, start_idx, horizon) → Tuple`
 
-**Purpose:** Extracts segment for MPC prediction horizon.
+Extracts `(x_refs, u_refs)` for MPC prediction horizon.
 
-**Returns:** `(x_refs, u_refs)` where:
-- `x_refs`: shape `(horizon, 3)`
-- `u_refs`: shape `(horizon, 2)`
+**Note:** Checkpoint paths are currently precomputed into sampled references.
+Local online checkpoint-horizon generation is planned.
 
 ---
 
@@ -935,110 +433,27 @@ Includes angle wrapping to handle $\pm\pi$ discontinuities.
 
 **Location:** `src/hybrid_controller/hybrid_controller/logging/simulation_logger.py`
 
-Comprehensive logging system with multiple output formats.
-
----
-
-#### Enum: `LogEventType`
-
-| Event | Description |
-|-------|-------------|
-| `STATE_UPDATE` | Robot state changes |
-| `CONTROL_ACTION` | Control command issued |
-| `PARAMETER_CHANGE` | Runtime parameter modification |
-| `ERROR` | Error conditions |
-| `CONSTRAINT_EVENT` | Constraint activations/violations |
-| `SIMULATION_EVENT` | General simulation events |
-
----
-
-#### Class: `SimulationLogger`
-
-##### Key Methods
-
 | Method | Purpose |
 |--------|---------|
-| `log_state()` | Records state, reference, and error |
-| `log_control()` | Records control with controller type and solve time |
-| `log_parameter_change()` | Tracks runtime parameter modifications |
-| `log_error()` | Logs errors with process identification |
-| `log_constraint_event()` | Records constraint activations |
-| `log_mpc_solve()` | Logs MPC solver diagnostics |
-| `log_obstacle_proximity()` | Warns about obstacle proximity |
-| `log_hybrid_step()` | Records blend weight, risk, mode, jerk (v0.6.0) |
-| `compute_jerk_metrics()` | Static: peak/RMS/p95 jerk from controls (v0.6.0) |
-
-##### Export Methods
-
-| Method | Format | Content |
-|--------|--------|---------|
-| `export_to_csv()` | CSV | State history |
-| `export_controls_to_csv()` | CSV | Control history |
-| `export_to_json()` | JSON | All entries with metadata |
-
-##### `get_summary() → Dict`
-
-Returns:
-```python
-{
-    "total_entries": int,
-    "state_updates": int,
-    "control_actions": int,
-    "errors": int,
-    "warnings": int,
-    "max_error_norm": float,
-    "mean_error_norm": float,
-    "final_error_norm": float
-}
-```
+| `log_state()` | Records state, reference, error |
+| `log_control()` | Records control with type and solve time |
+| `log_hybrid_step()` | Blend weight, risk, mode, jerk |
+| `compute_jerk_metrics()` | Peak/RMS/p95 jerk from controls |
+| `export_to_csv()` | State history |
+| `export_controls_to_csv()` | Control history |
+| `export_to_json()` | All entries with metadata |
 
 ---
 
 ## 6. ROS2 Nodes
 
-### Node: `trajectory_node.py`
-
-**Purpose:** Publishes Figure-8 reference trajectory.
-
-**Publishers:**
-| Topic | Type | Description |
-|-------|------|-------------|
-| `/reference_trajectory` | nav_msgs/Path | Full trajectory |
-| `/current_reference` | geometry_msgs/PoseStamped | Current reference |
-| `/reference_velocity` | geometry_msgs/Twist | Reference velocity |
-
----
-
-### Node: `lqr_node.py`
-
-**Purpose:** LQR trajectory tracking controller.
-
-**Subscribers:**
-| Topic | Type |
-|-------|------|
-| `/odom` | nav_msgs/Odometry |
-| `/current_reference` | geometry_msgs/PoseStamped |
-
-**Publishers:**
-| Topic | Type |
-|-------|------|
-| `/cmd_vel` | geometry_msgs/Twist |
-
----
-
-### Node: `mpc_node.py`
-
-**Purpose:** MPC with obstacle avoidance.
-
-**Additional Subscriber:**
-| Topic | Type |
-|-------|------|
-| `/mpc_obstacles` | std_msgs/Float32MultiArray |
-
-**Additional Publisher:**
-| Topic | Type |
-|-------|------|
-| `/mpc_predicted_path` | nav_msgs/Path |
+| Node | Purpose | Key Topics |
+|------|---------|------------|
+| `trajectory_node.py` | Publishes reference trajectory | `/reference_trajectory`, `/current_reference` |
+| `lqr_node.py` | LQR tracking | `/odom` → `/cmd_vel` |
+| `mpc_node.py` | MPC obstacle avoidance | `/mpc_obstacles` → `/cmd_vel`, `/mpc_predicted_path` |
+| `hybrid_node.py` | Smooth hybrid blending (ROS2) | `/odom`, `/obstacles` → `/cmd_vel` |
+| `kinematic_sim_node.py` | Lightweight odom bridge | `/cmd_vel` → `/odom` |
 
 ---
 
@@ -1046,19 +461,99 @@ Returns:
 
 **File:** `run_simulation.py`
 
-**Usage:**
 ```bash
-python run_simulation.py --mode lqr      # LQR only
-python run_simulation.py --mode mpc      # MPC with obstacles
-python run_simulation.py --mode compare  # Side-by-side comparison
+python run_simulation.py --mode lqr
+python run_simulation.py --mode mpc
+python run_simulation.py --mode compare
+python run_simulation.py --mode hybrid
+python run_simulation.py --mode hybrid --trajectory slalom --scenario dense
+python run_simulation.py --mode lqr --trajectory checkpoint_path --checkpoint-preset warehouse
 ```
 
-**Options:**
 | Flag | Description |
 |------|-------------|
+| `--mode` | `lqr`, `mpc`, `compare`, `hybrid`, `adaptive`, `hybrid_adaptive` |
+| `--trajectory` | `figure8`, `circle`, `clover`, `slalom`, `checkpoint_path` |
+| `--scenario` | `default`, `sparse`, `dense`, `corridor`, `moving`, `random_walk` |
 | `--duration` | Simulation duration (seconds) |
 | `--no-plot` | Disable visualization |
-| `--output-dir` | Custom output directory |
+
+---
+
+## 8. Advanced Scenarios
+
+**Location:** `evaluation/scenarios.py`
+
+| Scenario | Description | Purpose |
+|----------|-------------|---------|
+| `CorridorScenario` | Narrow passage (two obstacle walls) | Simultaneous constraint handling |
+| `BugTrapScenario` | U-shaped obstacle configuration | Local minima handling |
+| `DenseClutterScenario` | High-density random field (8-15 obstacles) | Solver speed and switching stress test |
+| `MovingObstacleScenario` | Bounded linear obstacle motion | Dynamic avoidance validation |
+| `RandomWalkScenario` | Bounded random-walk obstacle motion | Stochastic obstacle stress testing |
+
+Standalone `run_simulation.py` now uses dynamic obstacle fields for
+`moving` and `random_walk` scenarios with per-step obstacle updates.
+
+---
+
+## 9. Docker and Gazebo Harness
+
+### Infrastructure Files
+
+| File | Purpose |
+|------|---------|
+| `Dockerfile` | Container image definition |
+| `docker-compose.yml` | Service orchestration |
+| `docker/run_validation_suite.sh` | Standalone benchmarks inside container |
+| `docker/run_gazebo_suite.sh` | ROS2/Gazebo demo with rosbag recording |
+| `docker/run_full_pipeline.sh` | Both suites |
+
+### Runtime Topology
+
+```
+Validation Suite                      Gazebo Suite
+─────────────────                     ────────────
+run_simulation.py → logs/, outputs/   hybrid_gazebo.launch.py
+statistical_runner.py → results/        ├── Gazebo World
+                                        ├── kinematic_sim_node → /odom
+                                        ├── hybrid_node → /cmd_vel
+                                        ├── trajectory_node
+                                        └── ros2 bag record
+```
+
+### Important Limitation
+
+The Gazebo path uses `kinematic_sim_node.py` for `/odom`, not a fully coupled
+Gazebo robot model with wheel plugins. This is controller-in-the-loop validation,
+not full plant-in-Gazebo integration.
+
+---
+
+## 10. Integration Status and Next Steps
+
+### Current Module Status
+
+| Module | Status |
+|--------|--------|
+| LQR controller | ✅ Integrated and benchmarked |
+| MPC controller (CVXPY) | ✅ Integrated and benchmarked |
+| Parametrised solver (38× speedup) | ✅ Integrated |
+| Smooth hybrid supervisor | ✅ Integrated and benchmarked |
+| Risk metrics | ✅ Integrated (dynamic obstacle view wired in standalone) |
+| Adaptive MPC (CasADi) | ✅ Integrated in standalone CLI (`adaptive`, `hybrid_adaptive`) |
+| Trajectory families | ✅ figure-8, circle, clover, slalom, checkpoints |
+| Checkpoint-horizon (online) | ⚠️ Planned |
+| Docker validation | ✅ Syntax-checked, not end-to-end tested |
+| Gazebo harness | ⚠️ Controller-in-loop only |
+
+### Priority Roadmap
+
+1. Extend `evaluation/statistical_runner.py` to include adaptive and hybrid-adaptive modes
+2. Replace precomputed checkpoint curves with local online checkpoint-horizon generation
+3. Add richer uncertainty propagation to risk/inflation beyond geometric inflation
+4. Replace the lightweight ROS odom shim with a full Gazebo robot model
+5. Benchmark all five modes at scale: LQR, MPC, Hybrid, Adaptive MPC, Hybrid+Adaptive
 
 ---
 
@@ -1066,27 +561,5 @@ python run_simulation.py --mode compare  # Side-by-side comparison
 
 | Name | GitHub | Email |
 |------|--------|-------|
-| Kshitiz | [@Erebuzzz](https://github.com/Erebuzzz) | kshitiz23@iiserb.ac.in |
-| Agolika | [@Agolika413](https://github.com/Agolika413) | agolika23@iiserb.ac.in |
-
----
-
-## 8. Advanced Scenarios (New in v0.6.2)
-
-**Location:** `evaluation/scenarios.py`
-
-Implements procedural generation for stress-testing environments.
-
-### Scenario Generators
-
-#### 1. `CorridorScenario`
-- **Description**: Narrow passage formed by two walls of obstacles.
-- **Purpose**: Tests simultaneous constraint handling from both sides.
-
-#### 2. `BugTrapScenario`
-- **Description**: U-shaped obstacle configuration.
-- **Purpose**: Tests local minima handling. Pure gradient methods fail here; MPC *should* succeed with sufficient horizon, but often fails due to latency constraints in this implementation.
-
-#### 3. `DenseClutterScenario`
-- **Description**: High-density random field (8-15 obstacles).
-- **Purpose**: Stress tests solver speed and switching frequency.
+| Kshitiz Kumar Sinha | [@Erebuzzz](https://github.com/Erebuzzz) | kshitiz23@iiserb.ac.in |
+| Agolika BM | [@Agolika413](https://github.com/Agolika413) | agolika23@iiserb.ac.in |

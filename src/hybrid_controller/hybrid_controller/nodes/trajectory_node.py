@@ -3,16 +3,19 @@
 Trajectory Node
 ===============
 
-ROS2 node that publishes the Figure-8 reference trajectory.
+ROS2 node that publishes reference trajectories for the navigation stack.
 
 Publishers:
     /reference_trajectory (nav_msgs/Path): Full reference trajectory
     /current_reference (geometry_msgs/PoseStamped): Current reference pose
 
 Parameters:
-    amplitude: Spatial size of trajectory (meters)
-    frequency: Angular frequency (rad/s)
+    amplitude: Spatial size of analytic trajectories (meters)
+    frequency: Angular frequency of analytic trajectories (rad/s)
     duration: Total trajectory duration (seconds)
+    trajectory_type: Reference family to publish
+    checkpoint_preset: Preset used when trajectory_type=checkpoint_path
+    nominal_speed: Desired speed along checkpoint paths (m/s)
 """
 
 import rclpy
@@ -40,26 +43,36 @@ class TrajectoryPublisher(Node):
         self.declare_parameter('frequency', 0.5)
         self.declare_parameter('duration', 20.0)
         self.declare_parameter('dt', 0.02)
-        
+        self.declare_parameter('trajectory_type', 'figure8')
+        self.declare_parameter('checkpoint_preset', 'diamond')
+        self.declare_parameter('nominal_speed', 0.8)
+
         # Get parameters
         self.amplitude = self.get_parameter('amplitude').value
         self.frequency = self.get_parameter('frequency').value
         self.duration = self.get_parameter('duration').value
         self.dt = self.get_parameter('dt').value
-        
+        self.trajectory_type = self.get_parameter('trajectory_type').value
+        self.checkpoint_preset = self.get_parameter('checkpoint_preset').value
+        self.nominal_speed = self.get_parameter('nominal_speed').value
+
         # Initialize trajectory generator
         self.generator = ReferenceTrajectoryGenerator(
             A=self.amplitude,
             a=self.frequency,
-            dt=self.dt
+            dt=self.dt,
+            trajectory_type=self.trajectory_type,
+            checkpoint_preset=self.checkpoint_preset,
+            nominal_speed=self.nominal_speed,
         )
         
         # Generate trajectory
         self.trajectory = self.generator.generate(self.duration)
         self.current_idx = 0
-        
+
         self.get_logger().info(
-            f"Generated Figure-8 trajectory with {len(self.trajectory)} points"
+            f"Generated {self._describe_trajectory()} trajectory with "
+            f"{len(self.trajectory)} points"
         )
         
         # QoS profile
@@ -77,6 +90,12 @@ class TrajectoryPublisher(Node):
         self.publish_full_path()
         
         self.get_logger().info("Trajectory publisher initialized")
+
+    def _describe_trajectory(self) -> str:
+        """Build a readable trajectory label for logs."""
+        if self.trajectory_type == 'checkpoint_path':
+            return f"{self.trajectory_type} ({self.checkpoint_preset})"
+        return str(self.trajectory_type)
     
     def publish_full_path(self):
         """Publish the complete reference trajectory as a Path message."""

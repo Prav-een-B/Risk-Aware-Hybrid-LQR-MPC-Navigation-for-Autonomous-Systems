@@ -16,6 +16,8 @@ setup(
         (os.path.join('share', package_name, 'launch'), glob('launch/*.py')),
         # Include config files
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
+        # Include Gazebo world files
+        (os.path.join('share', package_name, 'worlds'), glob('../../worlds/*')),
     ],
     install_requires=[
         'setuptools',
@@ -36,6 +38,8 @@ setup(
             'trajectory_node = hybrid_controller.nodes.trajectory_node:main',
             'lqr_node = hybrid_controller.nodes.lqr_node:main',
             'mpc_node = hybrid_controller.nodes.mpc_node:main',
+            'hybrid_node = hybrid_controller.nodes.hybrid_node:main',
+            'kinematic_sim_node = hybrid_controller.nodes.kinematic_sim_node:main',
             'state_estimator_node = hybrid_controller.nodes.state_estimator_node:main',
         ],
     },

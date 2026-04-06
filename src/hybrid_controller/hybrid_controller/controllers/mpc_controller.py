@@ -36,6 +36,9 @@ class Obstacle:
     x: float  # x-position (meters)
     y: float  # y-position (meters)
     radius: float  # radius (meters)
+    vx: float = 0.0
+    vy: float = 0.0
+    motion_model: str = "static"
     
     def distance_to(self, px: float, py: float) -> float:
         """Compute distance from point to obstacle center."""

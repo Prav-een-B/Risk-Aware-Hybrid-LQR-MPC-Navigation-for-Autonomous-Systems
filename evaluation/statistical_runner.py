@@ -7,6 +7,7 @@ obstacle configurations, sensor noise, and control latency.
 
 Usage:
     python evaluation/statistical_runner.py --configs 50 --modes hybrid lqr mpc
+    python evaluation/statistical_runner.py --configs 10 --modes adaptive hybrid_adaptive
     python evaluation/statistical_runner.py --configs 100 --noise 0.01 --delay 20
 
 Output:
@@ -42,7 +43,34 @@ from hybrid_controller.controllers.hybrid_blender import BlendingSupervisor
 from hybrid_controller.controllers.risk_metrics import RiskMetrics
 from hybrid_controller.trajectory.reference_generator import ReferenceTrajectoryGenerator
 from hybrid_controller.logging.simulation_logger import SimulationLogger
-from evaluation.scenarios import ObstacleConfig, get_generator, ScenarioGenerator
+from evaluation.scenarios import ObstacleConfig, InflationConfig, get_generator
+
+
+BLENDED_MODES = {'hybrid', 'hybrid_adaptive'}
+ADAPTIVE_MODES = {'adaptive', 'hybrid_adaptive'}
+DEFAULT_INFLATION = InflationConfig(
+    safety_factor=1.0,
+    sensing_factor=0.05,
+    motion_lookahead=0.5,
+)
+_ADAPTIVE_MPC_CLASS = None
+
+
+def get_adaptive_mpc_class():
+    """Lazy import so adaptive modes remain optional."""
+    global _ADAPTIVE_MPC_CLASS
+    if _ADAPTIVE_MPC_CLASS is not None:
+        return _ADAPTIVE_MPC_CLASS
+
+    try:
+        from hybrid_controller.controllers.adaptive_mpc_controller import AdaptiveMPCController
+    except Exception as exc:
+        raise RuntimeError(
+            "Adaptive modes require CasADi. Install optional dependency with: pip install casadi"
+        ) from exc
+
+    _ADAPTIVE_MPC_CLASS = AdaptiveMPCController
+    return _ADAPTIVE_MPC_CLASS
 
 
 # -- Data classes ----------------------------------------------------
@@ -119,10 +147,12 @@ def run_single_config(mode: str,
     Run a single simulation with given controller mode and obstacle config.
     
     Modes:
-        - 'lqr':       Pure LQR (ignores obstacles)
-        - 'mpc':       Pure MPC
-        - 'hard_switch': Hard LQR/MPC switching (threshold-based)
-        - 'hybrid':    Smooth blending (BlendingSupervisor)
+        - 'lqr':              Pure LQR (ignores obstacles)
+        - 'mpc':              Pure MPC
+        - 'hard_switch':      Hard LQR/MPC switching (threshold-based)
+        - 'hybrid':           Smooth blending (BlendingSupervisor)
+        - 'adaptive':         Adaptive MPC with online parameter estimation
+        - 'hybrid_adaptive':  Smooth blending between LQR and Adaptive MPC
         
     Args:
         mode: Controller mode string
@@ -137,6 +167,8 @@ def run_single_config(mode: str,
     """
     start_wall = time.perf_counter()
     
+    rng = np.random.RandomState(obstacle_config.seed)
+
     # -- Initialize components --
     robot = DifferentialDriveRobot(v_max=2.0, omega_max=3.0)
     traj_gen = ReferenceTrajectoryGenerator(A=2.0, a=0.5, dt=dt, T_blend=0.5)
@@ -144,12 +176,34 @@ def run_single_config(mode: str,
     lqr = LQRController(Q_diag=[15.0, 15.0, 8.0], R_diag=[0.1, 0.1],
                          dt=dt, v_max=2.0, omega_max=3.0)
     
-    mpc = CVXPYgenWrapper(
-        horizon=5, Q_diag=[80.0, 80.0, 120.0], R_diag=[0.1, 0.1],
-        P_diag=[20.0, 20.0, 40.0], S_diag=[0.1, 0.5], J_diag=[0.05, 0.3],
-        v_max=2.0, omega_max=3.0, solver_name='OSQP'
-    )
-    linearizer = Linearizer(dt=dt)
+    mpc = None
+    linearizer = None
+    if mode in {'mpc', 'hard_switch', 'hybrid'}:
+        mpc = CVXPYgenWrapper(
+            horizon=5, Q_diag=[80.0, 80.0, 120.0], R_diag=[0.1, 0.1],
+            P_diag=[20.0, 20.0, 40.0], S_diag=[0.1, 0.5], J_diag=[0.05, 0.3],
+            v_max=2.0, omega_max=3.0, solver_name='OSQP'
+        )
+        linearizer = Linearizer(dt=dt)
+
+    adaptive_mpc = None
+    if mode in ADAPTIVE_MODES:
+        AdaptiveMPCController = get_adaptive_mpc_class()
+        adaptive_mpc = AdaptiveMPCController(
+            prediction_horizon=6,
+            terminal_horizon=4,
+            Q_diag=[20.0, 20.0, 40.0],
+            R_diag=[0.1, 0.1],
+            d_safe=0.3,
+            q_xi=1000.0,
+            omega_term=8.0,
+            dt=dt,
+            v_max=2.0,
+            omega_max=3.0,
+            adaptation_gamma=0.01,
+            theta_init=np.array([0.9, 0.9]),
+            max_obstacles=10,
+        )
     
     risk_metrics = RiskMetrics(
         d_safe=0.3, d_trigger=1.0, alpha=0.6, beta=0.4,
@@ -162,8 +216,10 @@ def run_single_config(mode: str,
         feasibility_decay=0.8, dt=dt
     )
     
-    obstacles = obstacle_config.to_obstacle_list()
-    obstacle_dicts = obstacle_config.obstacles
+    obstacle_field = obstacle_config.create_field(
+        inflation=DEFAULT_INFLATION,
+        seed=obstacle_config.seed,
+    )
     
     # -- Generate trajectory --
     trajectory = traj_gen.generate(duration)
@@ -179,7 +235,7 @@ def run_single_config(mode: str,
     solve_times = []
     infeasible_count = 0
     collision_count = 0
-    blend_weights = np.zeros(N - 1) if mode == 'hybrid' else None
+    blend_weights = np.zeros(N - 1) if mode in BLENDED_MODES else None
     
     # Control delay buffer managed by ActuatorDynamics now
     actuator = ActuatorDynamics(noise_config.to_actuator_params(), dt)
@@ -187,18 +243,23 @@ def run_single_config(mode: str,
     # MPC rate control
     mpc_rate = 5  # Run MPC every 5 steps
     mpc_solution = None
+    adaptive_solution = None
     solver_status = 'optimal'
     solver_time_ms = 0.0
     
     # -- Simulation loop --
     for k in range(N):
+        controller_obstacles = obstacle_field.controller_obstacles()
+        risk_obstacles = obstacle_field.risk_obstacles()
+        collision_obstacles = obstacle_field.actual_obstacles()
+
         # Apply noise to state measurement
         x_measured = x.copy()
         if noise_config.position_noise_std > 0:
-            x_measured[0] += np.random.normal(0, noise_config.position_noise_std)
-            x_measured[1] += np.random.normal(0, noise_config.position_noise_std)
+            x_measured[0] += rng.normal(0, noise_config.position_noise_std)
+            x_measured[1] += rng.normal(0, noise_config.position_noise_std)
         if noise_config.heading_noise_std > 0:
-            x_measured[2] += np.random.normal(0, noise_config.heading_noise_std)
+            x_measured[2] += rng.normal(0, noise_config.heading_noise_std)
         
         states[k] = x
         
@@ -215,21 +276,11 @@ def run_single_config(mode: str,
             u = lqr.compute_control(x_measured, x_ref, x_ref_dot)
         
         elif mode == 'mpc':
-            lookahead = min(mpc.N + 1, N - k)
-            x_refs = np.array([traj_gen.get_reference_at_index(k + j)[0] 
-                              for j in range(lookahead)])
-            u_refs = np.array([traj_gen.get_reference_at_index(min(k + j, N - 2))[1][:2] 
-                              for j in range(lookahead - 1)])
-            
-            # Pad if needed
-            while len(x_refs) < mpc.N + 1:
-                x_refs = np.vstack([x_refs, x_refs[-1:]])
-            while len(u_refs) < mpc.N:
-                u_refs = np.vstack([u_refs, u_refs[-1:]])
+            x_refs, u_refs = traj_gen.get_trajectory_segment(k, mpc.N + 1)
             
             # Use linearizer to get A_d, B_d
             v_ref = u_refs[0, 0] if abs(u_refs[0, 0]) > 0.01 else 0.1
-            A_d, B_d = linearizer.get_discrete_model_explicit(v_ref, traj_gen.get_reference_at_index(k)[0][2])
+            A_d, B_d = linearizer.get_discrete_model_explicit(v_ref, x_refs[0, 2])
             
             sol = mpc.solve_fast(x_measured, x_refs, A_d, B_d)
             u = sol.optimal_control
@@ -239,22 +290,14 @@ def run_single_config(mode: str,
         
         elif mode == 'hard_switch':
             # Risk-based hard switching (baseline comparison)
-            assessment = risk_metrics.assess_risk(x_measured, obstacle_dicts)
+            assessment = risk_metrics.assess_risk(x_measured, risk_obstacles)
             
             if assessment.combined_risk > 0.3:
                 # MPC mode
-                lookahead = min(mpc.N + 1, N - k)
-                x_refs = np.array([traj_gen.get_reference_at_index(k + j)[0] 
-                                  for j in range(lookahead)])
-                u_refs = np.array([traj_gen.get_reference_at_index(min(k + j, N - 2))[1][:2] 
-                                  for j in range(lookahead - 1)])
-                while len(x_refs) < mpc.N + 1:
-                    x_refs = np.vstack([x_refs, x_refs[-1:]])
-                while len(u_refs) < mpc.N:
-                    u_refs = np.vstack([u_refs, u_refs[-1:]])
+                x_refs, u_refs = traj_gen.get_trajectory_segment(k, mpc.N + 1)
                 
                 v_ref = u_refs[0, 0] if abs(u_refs[0, 0]) > 0.01 else 0.1
-                A_d, B_d = linearizer.get_discrete_model_explicit(v_ref, traj_gen.get_reference_at_index(k)[0][2])
+                A_d, B_d = linearizer.get_discrete_model_explicit(v_ref, x_refs[0, 2])
                 
                 sol = mpc.solve_fast(x_measured, x_refs, A_d, B_d)
                 u = sol.optimal_control
@@ -267,22 +310,14 @@ def run_single_config(mode: str,
         elif mode == 'hybrid':
             # Smooth blending (our contribution)
             u_lqr = lqr.compute_control(x_measured, x_ref, x_ref_dot)
-            assessment = risk_metrics.assess_risk(x_measured, obstacle_dicts)
+            assessment = risk_metrics.assess_risk(x_measured, risk_obstacles)
             
             # MPC at reduced rate
-            if k % mpc_rate == 0:
-                lookahead = min(mpc.N + 1, N - k)
-                x_refs = np.array([traj_gen.get_reference_at_index(k + j)[0] 
-                                  for j in range(lookahead)])
-                u_refs = np.array([traj_gen.get_reference_at_index(min(k + j, N - 2))[1][:2] 
-                                  for j in range(lookahead - 1)])
-                while len(x_refs) < mpc.N + 1:
-                    x_refs = np.vstack([x_refs, x_refs[-1:]])
-                while len(u_refs) < mpc.N:
-                    u_refs = np.vstack([u_refs, u_refs[-1:]])
+            if k % mpc_rate == 0 or mpc_solution is None:
+                x_refs, u_refs = traj_gen.get_trajectory_segment(k, mpc.N + 1)
                 
                 v_ref = u_refs[0, 0] if abs(u_refs[0, 0]) > 0.01 else 0.1
-                A_d, B_d = linearizer.get_discrete_model_explicit(v_ref, traj_gen.get_reference_at_index(k)[0][2])
+                A_d, B_d = linearizer.get_discrete_model_explicit(v_ref, x_refs[0, 2])
                 
                 mpc_solution = mpc.solve_fast(x_measured, x_refs, A_d, B_d)
                 solver_status = mpc_solution.status
@@ -303,12 +338,63 @@ def run_single_config(mode: str,
                 feasibility_margin=feas_margin
             )
             blend_weights[k] = blend_info.weight
+
+        elif mode == 'adaptive':
+            x_refs, u_refs = traj_gen.get_trajectory_segment(k, adaptive_mpc.N_ext + 1)
+
+            if k % mpc_rate == 0 or adaptive_solution is None:
+                adaptive_solution = adaptive_mpc.solve_tracking(
+                    x_measured,
+                    x_refs,
+                    u_refs[:adaptive_mpc.N_ext],
+                    controller_obstacles,
+                )
+                solve_times.append(adaptive_solution.solve_time_ms)
+                if adaptive_solution.status not in ('optimal', 'optimal_inaccurate'):
+                    infeasible_count += 1
+
+            if adaptive_solution is not None:
+                u = adaptive_solution.optimal_control
+            else:
+                u = lqr.compute_control(x_measured, x_ref, x_ref_dot)
+
+        elif mode == 'hybrid_adaptive':
+            u_lqr = lqr.compute_control(x_measured, x_ref, x_ref_dot)
+            assessment = risk_metrics.assess_risk(x_measured, risk_obstacles)
+
+            if k % mpc_rate == 0 or adaptive_solution is None:
+                x_refs, u_refs = traj_gen.get_trajectory_segment(k, adaptive_mpc.N_ext + 1)
+                adaptive_solution = adaptive_mpc.solve_tracking(
+                    x_measured,
+                    x_refs,
+                    u_refs[:adaptive_mpc.N_ext],
+                    controller_obstacles,
+                )
+                solver_status = adaptive_solution.status
+                solver_time_ms = adaptive_solution.solve_time_ms
+                solve_times.append(solver_time_ms)
+                if solver_status not in ('optimal', 'optimal_inaccurate'):
+                    infeasible_count += 1
+
+            u_adaptive = adaptive_solution.optimal_control if adaptive_solution is not None else u_lqr
+            feas_margin = adaptive_solution.feasibility_margin if adaptive_solution is not None else 0.0
+
+            u, blend_info = blender.blend(
+                u_lqr=u_lqr,
+                u_mpc=u_adaptive,
+                risk=assessment.combined_risk,
+                solver_status=solver_status,
+                solver_time_ms=solver_time_ms,
+                feasibility_margin=feas_margin,
+            )
+            blend_weights[k] = blend_info.weight
         
         else:
             raise ValueError(f"Unknown mode: {mode}")
         
         # -- Apply Actuator Dynamics (delay + lag) --
         # actuator.update() handles delay buffer and first-order lag
+        x_prev = x.copy()
         v_applied, omega_applied = actuator.update(u[0], u[1])
         u_applied = np.array([v_applied, omega_applied])
         
@@ -316,12 +402,17 @@ def run_single_config(mode: str,
         
         # -- Simulate step --
         x = robot.simulate_step(x, u_applied, dt.real if hasattr(dt, 'real') else dt)
+
+        if mode in ADAPTIVE_MODES:
+            adaptive_mpc.adapt_parameters(x_measured=x, x_prev=x_prev, u_prev=u_applied)
         
         # -- Check collisions --
-        for obs in obstacles:
-            dist = np.sqrt((x[0] - obs.x)**2 + (x[1] - obs.y)**2)
-            if dist < obs.radius:
+        for obs in collision_obstacles:
+            if obs.is_collision(x[0], x[1], 0.0):
                 collision_count += 1
+                break
+
+        obstacle_field.step(dt)
     
     # -- Compute metrics --
     wall_time = time.perf_counter() - start_wall
@@ -334,7 +425,7 @@ def run_single_config(mode: str,
     
     # Blend stats
     bw_mean, bw_std, n_transitions = 0.0, 0.0, 0
-    if mode == 'hybrid':
+    if mode in BLENDED_MODES:
         stats = blender.get_statistics()
         bw_mean = stats.get('weight_mean', 0.0)
         bw_std = stats.get('weight_std', 0.0)
@@ -386,7 +477,7 @@ def aggregate_results(runs: List[RunMetrics], mode: str) -> AggregatedResults:
         'total_control_effort', 'wall_time_s'
     ]
     
-    if mode == 'hybrid':
+    if mode in BLENDED_MODES:
         metric_names += ['blend_weight_mean', 'blend_weight_std', 'smooth_transitions']
     
     metrics = {}
@@ -500,6 +591,9 @@ def run_statistical_validation(
     """
     if modes is None:
         modes = ['lqr', 'mpc', 'hard_switch', 'hybrid']
+
+    if any(mode in ADAPTIVE_MODES for mode in modes):
+        get_adaptive_mpc_class()
     
     noise_config = NoiseConfig(
         position_noise_std=noise_std,
@@ -514,19 +608,6 @@ def run_statistical_validation(
         print(f"Generating {n_configs} obstacle configurations (type={scenario_type}, seed={base_seed})...")
     
     generator = get_generator(scenario_type)
-    # Instantiate the appropriate generator based on name
-    if scenario_type == 'corridor':
-        from evaluation.scenarios import CorridorScenario
-        generator = CorridorScenario()
-    elif scenario_type == 'bugtrap':
-        from evaluation.scenarios import BugTrapScenario
-        generator = BugTrapScenario()
-    elif scenario_type == 'dense':
-        from evaluation.scenarios import DenseClutterScenario
-        generator = DenseClutterScenario()
-    else:
-        from evaluation.scenarios import RandomScenario
-        generator = RandomScenario()
         
     configs = generator.generate(n_configs, base_seed)
     
@@ -676,7 +757,7 @@ def main():
                         help='Number of randomized obstacle configs')
     parser.add_argument('--modes', nargs='+', 
                         default=['lqr', 'mpc', 'hard_switch', 'hybrid'],
-                        choices=['lqr', 'mpc', 'hard_switch', 'hybrid'],
+                        choices=['lqr', 'mpc', 'hard_switch', 'hybrid', 'adaptive', 'hybrid_adaptive'],
                         help='Controller modes to compare')
     parser.add_argument('--duration', type=float, default=20.0,
                         help='Simulation duration (seconds)')
@@ -691,7 +772,7 @@ def main():
     parser.add_argument('--actuator-noise', type=float, default=0.0,
                         help='Actuator execution noise std')
     parser.add_argument('--scenario', type=str, default='random',
-                        choices=['random', 'corridor', 'bugtrap', 'dense'],
+                        choices=['random', 'corridor', 'bugtrap', 'dense', 'moving', 'random_walk'],
                         help='Scenario type')
     parser.add_argument('--seed', type=int, default=42,
                         help='Base random seed')
@@ -716,6 +797,13 @@ def main():
         verbose=not args.quiet,
         output_dir=args.output
     )
+
+    # CasADi teardown can crash some Windows Python builds after completion.
+    # Force a clean process exit once results are fully persisted.
+    if os.name == 'nt' and any(mode in ADAPTIVE_MODES for mode in args.modes):
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
 
 
 if __name__ == '__main__':

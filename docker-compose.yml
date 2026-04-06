@@ -1,0 +1,19 @@
+services:
+  hybrid-controller:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: hybrid-controller:latest
+    container_name: hybrid-controller
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    network_mode: host
+    environment:
+      MPLBACKEND: Agg
+      DISPLAY: ${DISPLAY:-}
+      QT_X11_NO_MITSHM: "1"
+    volumes:
+      - ./:/workspace
+      - ./artifacts:/workspace/artifacts
+    command: bash
