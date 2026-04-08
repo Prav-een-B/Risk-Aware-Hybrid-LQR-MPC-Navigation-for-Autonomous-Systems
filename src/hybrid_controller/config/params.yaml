@@ -7,13 +7,10 @@ simulation:
   dt: 0.02                    # Sampling time (50 Hz for LQR)
   duration: 20.0              # Total simulation duration (seconds)
   
-# Trajectory parameters
+# Trajectory parameters (Figure-8 / Lemniscate)
 trajectory:
-  type: "figure8"             # figure8, circle, clover, slalom, checkpoint_path
-  checkpoint_preset: "diamond" # Used when type=checkpoint_path
-  nominal_speed: 0.8          # Target speed along checkpoint paths (m/s)
-  amplitude: 2.0              # Spatial size of analytic trajectories (meters)
-  frequency: 0.5              # Angular frequency of analytic trajectories (rad/s)
+  amplitude: 2.0              # Spatial size of trajectory (meters)
+  frequency: 0.5              # Angular frequency (rad/s)
   
 # Robot parameters
 robot:
