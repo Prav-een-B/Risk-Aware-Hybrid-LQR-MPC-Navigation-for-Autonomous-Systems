@@ -1,0 +1,309 @@
+[
+  {
+    "candidate": "F_aggressive_hybrid",
+    "tuning": {
+      "blend_risk_threshold": 0.15,
+      "blend_k_sigmoid": 12.0,
+      "risk_d_trigger": 1.6
+    },
+    "summary": {
+      "mean_error": 1.6204001063708482,
+      "mean_collisions": 7.2,
+      "mean_cp_completion": 0.29509268884268886,
+      "mean_cp_overshoot": 1.1929063789083398,
+      "score": 3.4245398318121425
+    },
+    "scenarios": [
+      {
+        "scenario": "baseline_static",
+        "mean_tracking_error": 1.928178315531035,
+        "collision_count": 21,
+        "checkpoint_completion_rate": 0.08108108108108109,
+        "mean_checkpoint_overshoot": 2.291641176285615
+      },
+      {
+        "scenario": "urban_dynamic",
+        "mean_tracking_error": 0.6364237512537403,
+        "collision_count": 0,
+        "checkpoint_completion_rate": 0.6153846153846154,
+        "mean_checkpoint_overshoot": 0.17304220562865846
+      },
+      {
+        "scenario": "stochastic_navigation",
+        "mean_tracking_error": 2.52272706565142,
+        "collision_count": 0,
+        "checkpoint_completion_rate": 0.4166666666666667,
+        "mean_checkpoint_overshoot": 1.0894245178563997
+      },
+      {
+        "scenario": "oscillatory_tracking",
+        "mean_tracking_error": 1.9245817414457818,
+        "collision_count": 15,
+        "checkpoint_completion_rate": 0.08108108108108109,
+        "mean_checkpoint_overshoot": 2.2353145379876787
+      },
+      {
+        "scenario": "vehicle_realistic",
+        "mean_tracking_error": 1.0900896579722639,
+        "collision_count": 0,
+        "checkpoint_completion_rate": 0.28125,
+        "mean_checkpoint_overshoot": 0.1751094567833474
+      }
+    ]
+  },
+  {
+    "candidate": "B_more_mpc",
+    "tuning": {
+      "blend_risk_threshold": 0.2,
+      "risk_d_trigger": 1.4
+    },
+    "summary": {
+      "mean_error": 1.4817572816508382,
+      "mean_collisions": 10.2,
+      "mean_cp_completion": 0.3547080734580735,
+      "mean_cp_overshoot": 1.0929663754967214,
+      "score": 3.6867142351320688
+    },
+    "scenarios": [
+      {
+        "scenario": "baseline_static",
+        "mean_tracking_error": 1.8311021278703745,
+        "collision_count": 32,
+        "checkpoint_completion_rate": 0.08108108108108109,
+        "mean_checkpoint_overshoot": 2.111129173889133
+      },
+      {
+        "scenario": "urban_dynamic",
+        "mean_tracking_error": 0.8349793703905355,
+        "collision_count": 0,
+        "checkpoint_completion_rate": 0.5384615384615384,
+        "mean_checkpoint_overshoot": 0.09734172199022716
+      },
+      {
+        "scenario": "stochastic_navigation",
+        "mean_tracking_error": 2.4475140896145913,
+        "collision_count": 0,
+        "checkpoint_completion_rate": 0.4166666666666667,
+        "mean_checkpoint_overshoot": 1.1177648506531819
+      },
+      {
+        "scenario": "oscillatory_tracking",
+        "mean_tracking_error": 1.8437195997498017,
+        "collision_count": 18,
+        "checkpoint_completion_rate": 0.08108108108108109,
+        "mean_checkpoint_overshoot": 2.0767624929187094
+      },
+      {
+        "scenario": "vehicle_realistic",
+        "mean_tracking_error": 0.45147122062888884,
+        "collision_count": 1,
+        "checkpoint_completion_rate": 0.65625,
+        "mean_checkpoint_overshoot": 0.06183363803235499
+      }
+    ]
+  },
+  {
+    "candidate": "D_safer",
+    "tuning": {
+      "risk_d_safe": 0.4,
+      "risk_d_trigger": 1.5,
+      "blend_risk_threshold": 0.2
+    },
+    "summary": {
+      "mean_error": 1.553562659252942,
+      "mean_collisions": 9.2,
+      "mean_cp_completion": 0.28595807345807345,
+      "mean_cp_overshoot": 1.1394672319349621,
+      "score": 3.733220297884765
+    },
+    "scenarios": [
+      {
+        "scenario": "baseline_static",
+        "mean_tracking_error": 1.8830425450477943,
+        "collision_count": 23,
+        "checkpoint_completion_rate": 0.08108108108108109,
+        "mean_checkpoint_overshoot": 2.2191885401878135
+      },
+      {
+        "scenario": "urban_dynamic",
+        "mean_tracking_error": 0.752715577052329,
+        "collision_count": 0,
+        "checkpoint_completion_rate": 0.5384615384615384,
+        "mean_checkpoint_overshoot": 0.09367128497268735
+      },
+      {
+        "scenario": "stochastic_navigation",
+        "mean_tracking_error": 2.4958454540525854,
+        "collision_count": 0,
+        "checkpoint_completion_rate": 0.4166666666666667,
+        "mean_checkpoint_overshoot": 1.093873025318955
+      },
+      {
+        "scenario": "oscillatory_tracking",
+        "mean_tracking_error": 1.855175701393861,
+        "collision_count": 17,
+        "checkpoint_completion_rate": 0.08108108108108109,
+        "mean_checkpoint_overshoot": 2.135321310233177
+      },
+      {
+        "scenario": "vehicle_realistic",
+        "mean_tracking_error": 0.7810340187181404,
+        "collision_count": 6,
+        "checkpoint_completion_rate": 0.3125,
+        "mean_checkpoint_overshoot": 0.15528199896217795
+      }
+    ]
+  },
+  {
+    "candidate": "A_default",
+    "tuning": {},
+    "summary": {
+      "mean_error": 1.520440142130925,
+      "mean_collisions": 12.0,
+      "mean_cp_completion": 0.30632363132363133,
+      "mean_cp_overshoot": 0.5937893162824786,
+      "score": 3.782824332509646
+    },
+    "scenarios": [
+      {
+        "scenario": "baseline_static",
+        "mean_tracking_error": 1.379460600740237,
+        "collision_count": 41,
+        "checkpoint_completion_rate": 0.02702702702702703,
+        "mean_checkpoint_overshoot": 0.0
+      },
+      {
+        "scenario": "urban_dynamic",
+        "mean_tracking_error": 1.0877491393700445,
+        "collision_count": 0,
+        "checkpoint_completion_rate": 0.7692307692307693,
+        "mean_checkpoint_overshoot": 0.49233102430622583
+      },
+      {
+        "scenario": "stochastic_navigation",
+        "mean_tracking_error": 2.0181297534926133,
+        "collision_count": 0,
+        "checkpoint_completion_rate": 0.4583333333333333,
+        "mean_checkpoint_overshoot": 1.1607976958508395
+      },
+      {
+        "scenario": "oscillatory_tracking",
+        "mean_tracking_error": 1.3074636742285395,
+        "collision_count": 19,
+        "checkpoint_completion_rate": 0.02702702702702703,
+        "mean_checkpoint_overshoot": 0.0
+      },
+      {
+        "scenario": "vehicle_realistic",
+        "mean_tracking_error": 1.8093975428231908,
+        "collision_count": 0,
+        "checkpoint_completion_rate": 0.25,
+        "mean_checkpoint_overshoot": 1.3158178612553275
+      }
+    ]
+  },
+  {
+    "candidate": "C_smoother_switch",
+    "tuning": {
+      "blend_k_sigmoid": 7.0,
+      "blend_dw_max": 1.5,
+      "blend_hysteresis_band": 0.08
+    },
+    "summary": {
+      "mean_error": 1.559279790039632,
+      "mean_collisions": 12.0,
+      "mean_cp_completion": 0.30799982674982673,
+      "mean_cp_overshoot": 0.9005066156913625,
+      "score": 4.063685429093068
+    },
+    "scenarios": [
+      {
+        "scenario": "baseline_static",
+        "mean_tracking_error": 1.540766989638651,
+        "collision_count": 24,
+        "checkpoint_completion_rate": 0.05405405405405406,
+        "mean_checkpoint_overshoot": 1.049119705205343
+      },
+      {
+        "scenario": "urban_dynamic",
+        "mean_tracking_error": 1.1003803759423127,
+        "collision_count": 0,
+        "checkpoint_completion_rate": 0.6923076923076923,
+        "mean_checkpoint_overshoot": 0.4467121517509681
+      },
+      {
+        "scenario": "stochastic_navigation",
+        "mean_tracking_error": 2.251749742694814,
+        "collision_count": 0,
+        "checkpoint_completion_rate": 0.4583333333333333,
+        "mean_checkpoint_overshoot": 1.1840276542709398
+      },
+      {
+        "scenario": "oscillatory_tracking",
+        "mean_tracking_error": 1.3281491089117157,
+        "collision_count": 36,
+        "checkpoint_completion_rate": 0.05405405405405406,
+        "mean_checkpoint_overshoot": 0.697285240269982
+      },
+      {
+        "scenario": "vehicle_realistic",
+        "mean_tracking_error": 1.5753527330106671,
+        "collision_count": 0,
+        "checkpoint_completion_rate": 0.28125,
+        "mean_checkpoint_overshoot": 1.1253883269595788
+      }
+    ]
+  },
+  {
+    "candidate": "E_higher_horizon",
+    "tuning": {
+      "mpc_horizon": 7,
+      "blend_risk_threshold": 0.25,
+      "risk_d_trigger": 1.4
+    },
+    "summary": {
+      "mean_error": 1.4953194601169817,
+      "mean_collisions": 12.8,
+      "mean_cp_completion": 0.28595807345807345,
+      "mean_cp_overshoot": 1.0201263554776525,
+      "score": 4.299504397582957
+    },
+    "scenarios": [
+      {
+        "scenario": "baseline_static",
+        "mean_tracking_error": 1.8516390586568792,
+        "collision_count": 29,
+        "checkpoint_completion_rate": 0.08108108108108109,
+        "mean_checkpoint_overshoot": 2.0526140232743066
+      },
+      {
+        "scenario": "urban_dynamic",
+        "mean_tracking_error": 0.9611035573267251,
+        "collision_count": 0,
+        "checkpoint_completion_rate": 0.5384615384615384,
+        "mean_checkpoint_overshoot": 0.11776010844603056
+      },
+      {
+        "scenario": "stochastic_navigation",
+        "mean_tracking_error": 2.6101052428550093,
+        "collision_count": 0,
+        "checkpoint_completion_rate": 0.4166666666666667,
+        "mean_checkpoint_overshoot": 1.2101287293203289
+      },
+      {
+        "scenario": "oscillatory_tracking",
+        "mean_tracking_error": 1.7763109201725167,
+        "collision_count": 28,
+        "checkpoint_completion_rate": 0.08108108108108109,
+        "mean_checkpoint_overshoot": 1.6121548752075976
+      },
+      {
+        "scenario": "vehicle_realistic",
+        "mean_tracking_error": 0.27743852157377785,
+        "collision_count": 7,
+        "checkpoint_completion_rate": 0.3125,
+        "mean_checkpoint_overshoot": 0.10797404113999953
+      }
+    ]
+  }
+]

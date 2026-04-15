@@ -16,6 +16,12 @@ if SRC_DIR not in sys.path:
 from hybrid_controller.trajectory.checkpoint_generator import (
     Checkpoint,
     generate_checkpoints,
+    generate_checkpoints_obstacle_aware,
+    _count_obstacles_near,
+)
+from hybrid_controller.navigation.checkpoint_manager import (
+    CheckpointManager,
+    Checkpoint as ManagerCheckpoint,
 )
 
 
@@ -480,9 +486,10 @@ def test_property_spacing_interpolation(n_points, intermediate_curvature):
         total_distance = 20.0
         avg_spacing = total_distance / (len(checkpoints) - 1)
         
-        # Allow 50% tolerance due to discretization and adaptive spacing
-        tolerance = max(expected_spacing * 0.5, 0.15)
-        assert abs(avg_spacing - expected_spacing) <= tolerance
+        # Allow tolerance for discretization: with coarse grids (n_points=100
+        # over 20m → 0.2m steps) the quantisation error can exceed 50%.
+        tolerance = max(expected_spacing * 0.5, 0.20)
+        assert abs(avg_spacing - expected_spacing) <= (tolerance + 1e-9)
 
 
 @given(
@@ -516,11 +523,16 @@ def test_property_maximum_spacing_constraint(n_points, curvature_val):
         max_spacing=max_spacing
     )
     
-    # Check that no consecutive checkpoint pair exceeds max_spacing
+    # Check that no consecutive checkpoint pair exceeds max_spacing.
+    # With coarse grids (n_points as low as 50 over 20m → ~0.4m per sample)
+    # each checkpoint placement is rounded UP to the next sample, so the
+    # actual path distance between them can exceed max_spacing by up to
+    # one sample step.
     if len(checkpoints) > 1:
+        step_size = 20.0 / max(n_points - 1, 1)
+        tolerance_factor = max_spacing + step_size + 1e-9
         violations = 0
         for i in range(1, len(checkpoints)):
-            # Compute path distance along trajectory
             idx1 = checkpoints[i-1].index
             idx2 = checkpoints[i].index
             path_distance = 0.0
@@ -529,11 +541,9 @@ def test_property_maximum_spacing_constraint(n_points, curvature_val):
                 dy = trajectory[j, 2] - trajectory[j-1, 2]
                 path_distance += np.sqrt(dx**2 + dy**2)
             
-            # Count violations (with tolerance for discretization)
-            if path_distance > max_spacing * 1.3:
+            if path_distance > tolerance_factor:
                 violations += 1
         
-        # Allow up to 10% violations due to discretization
         violation_rate = violations / (len(checkpoints) - 1)
         assert violation_rate <= 0.1
 
@@ -629,3 +639,148 @@ def test_property_checkpoint_default_state(n_points):
         assert cp.time_reached == 0.0
         assert cp.overshoot == 0.0
         assert cp.min_distance == float('inf')
+
+
+# ── Tests for obstacle-aware checkpoint generation ──────────────────
+
+def _make_straight_line(length=20.0, n_points=2000):
+    """Helper: straight-line trajectory along x-axis."""
+    t = np.linspace(0, length, n_points)
+    trajectory = np.column_stack([t, t, np.zeros(n_points), np.zeros(n_points)])
+    curvature = np.zeros(n_points)
+    return trajectory, curvature
+
+
+def test_obstacle_aware_no_obstacles_matches_curvature_only():
+    """With no obstacles, obstacle-aware generator should match curvature-only."""
+    traj, curv = _make_straight_line()
+    obs = np.empty((0, 2))
+
+    cps_curv = generate_checkpoints(traj, curv, min_spacing=0.1, max_spacing=1.0)
+    cps_obs = generate_checkpoints_obstacle_aware(
+        traj, curv, obs, S_min=0.1, S_max=1.0
+    )
+
+    assert len(cps_obs) == len(cps_curv)
+    for a, b in zip(cps_obs, cps_curv):
+        assert a.index == b.index
+
+
+def test_obstacle_aware_dense_near_obstacles():
+    """Many obstacles near the path should produce denser checkpoints."""
+    traj, curv = _make_straight_line()
+    obs_empty = np.empty((0, 2))
+    obs_dense = np.array([[5.0, 0.5], [5.5, 0.3], [6.0, 0.4], [6.5, 0.2]])
+
+    cps_sparse = generate_checkpoints_obstacle_aware(
+        traj, curv, obs_empty, S_min=0.1, S_max=1.0
+    )
+    cps_dense = generate_checkpoints_obstacle_aware(
+        traj, curv, obs_dense, S_min=0.1, S_max=1.0, sensor_range=5.0
+    )
+
+    assert len(cps_dense) > len(cps_sparse)
+
+
+def test_obstacle_aware_zero_obs_near_max_spacing():
+    """Zero obstacles → obstacle spacing ≈ S_max, so curvature-only governs."""
+    traj, curv = _make_straight_line()
+    obs = np.array([[100.0, 100.0]])  # far away
+
+    cps = generate_checkpoints_obstacle_aware(
+        traj, curv, obs, sensor_range=2.0, S_min=0.1, S_max=1.0
+    )
+    n_curv = generate_checkpoints(traj, curv, min_spacing=0.1, max_spacing=1.0)
+
+    assert len(cps) == len(n_curv)
+
+
+def test_obstacle_aware_four_obstacles_approaches_smin():
+    """Four obstacles within sensor range should push spacing toward S_min."""
+    traj, curv = _make_straight_line(length=5.0, n_points=500)
+    obs = np.array([[2.5, 0.1], [2.6, -0.1], [2.7, 0.2], [2.4, -0.2]])
+
+    cps = generate_checkpoints_obstacle_aware(
+        traj, curv, obs, sensor_range=5.0, gamma=0.5, S_min=0.1, S_max=1.0
+    )
+
+    assert len(cps) > 10
+
+
+def test_obstacle_aware_preserves_endpoints():
+    """First and last checkpoints should always be at trajectory endpoints."""
+    traj, curv = _make_straight_line()
+    obs = np.array([[10.0, 0.5]])
+
+    cps = generate_checkpoints_obstacle_aware(traj, curv, obs)
+
+    assert cps[0].index == 0
+    assert cps[-1].index == len(traj) - 1
+
+
+def test_count_obstacles_near():
+    """_count_obstacles_near counts correctly."""
+    obs = np.array([[0.0, 0.0], [1.0, 0.0], [5.0, 5.0]])
+    pos = np.array([0.0, 0.0])
+
+    assert _count_obstacles_near(pos, obs, 0.5) == 1
+    assert _count_obstacles_near(pos, obs, 1.5) == 2
+    assert _count_obstacles_near(pos, obs, 10.0) == 3
+    assert _count_obstacles_near(pos, np.empty((0, 2)), 10.0) == 0
+
+
+# ── Tests for CheckpointManager advance-by-1 fix ───────────────────
+
+def _make_manager_checkpoints(n=10):
+    """Helper: linear checkpoints for manager tests."""
+    return [
+        ManagerCheckpoint(
+            x=float(i), y=0.0, theta=0.0, curvature=0.0, index=i
+        )
+        for i in range(n)
+    ]
+
+
+def test_advance_increments_by_one():
+    """_advance_checkpoint must always increment current_idx by exactly 1."""
+    mgr = CheckpointManager(base_switching_radius=0.5, dt=0.02)
+    mgr.set_checkpoints(_make_manager_checkpoints(10))
+
+    mgr._advance_checkpoint(current_time=0.1, distance=0.1)
+    assert mgr.current_idx == 1
+
+    mgr._advance_checkpoint(current_time=0.2, distance=0.1)
+    assert mgr.current_idx == 2
+
+
+def test_advance_visits_all_checkpoints():
+    """Advancing through all checkpoints should visit every single one."""
+    n = 20
+    mgr = CheckpointManager(base_switching_radius=0.5, dt=0.02)
+    mgr.set_checkpoints(_make_manager_checkpoints(n))
+
+    for i in range(n):
+        mgr._advance_checkpoint(current_time=float(i) * 0.1, distance=0.05)
+
+    assert mgr.checkpoints_reached == n
+    assert mgr.current_idx == n
+    metrics = mgr.get_metrics()
+    assert metrics['completion_rate'] == 1.0
+
+
+def test_omega_ref_evolves_with_heading():
+    """omega_ref should reflect heading change between consecutive horizon steps."""
+    mgr = CheckpointManager(base_switching_radius=0.5, dt=0.02)
+    mgr.set_checkpoints([
+        ManagerCheckpoint(x=0.0, y=0.0, theta=0.0, curvature=0.0, index=0),
+        ManagerCheckpoint(x=1.0, y=1.0, theta=0.78, curvature=0.0, index=1),
+    ])
+
+    state = np.array([0.0, 0.0, 0.0])
+    x_refs, u_refs = mgr.get_local_trajectory_segment(state, 5)
+
+    assert x_refs.shape == (5, 3)
+    assert u_refs.shape == (4, 2)
+    assert not np.all(u_refs[:, 1] == u_refs[0, 1]), (
+        "omega_ref should vary across horizon steps when heading evolves"
+    )

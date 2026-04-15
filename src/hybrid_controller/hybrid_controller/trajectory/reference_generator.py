@@ -308,8 +308,13 @@ class ReferenceTrajectoryGenerator:
             if n_steps > 0:
                 s_vals = np.linspace(0, s, n_steps)
                 theta_vals = self.clothoid_kappa0 * s_vals + 0.5 * self.clothoid_k_rate * s_vals**2
-                px = np.trapz(np.cos(theta_vals), s_vals)
-                py = np.trapz(np.sin(theta_vals), s_vals)
+                # NumPy 2.x removed np.trapz in favor of np.trapezoid.
+                if hasattr(np, "trapezoid"):
+                    px = np.trapezoid(np.cos(theta_vals), s_vals)
+                    py = np.trapezoid(np.sin(theta_vals), s_vals)
+                else:
+                    px = np.trapz(np.cos(theta_vals), s_vals)
+                    py = np.trapz(np.sin(theta_vals), s_vals)
             else:
                 px, py = 0.0, 0.0
             
@@ -577,8 +582,19 @@ class ReferenceTrajectoryGenerator:
         omega = self.angular_velocity(t)
         return np.array([px, py, theta]), np.array([v, omega])
 
-    def generate(self, duration: Optional[float] = None) -> np.ndarray:
-        """Generate and cache a discrete-time reference trajectory."""
+    def generate(
+        self,
+        duration: Optional[float] = None,
+        obstacle_positions: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        """Generate and cache a discrete-time reference trajectory.
+
+        Args:
+            duration: Simulation duration (s).  Required for analytic types.
+            obstacle_positions: (M, 2) array of obstacle centres.  When
+                provided **and** checkpoint_mode is enabled, the obstacle-aware
+                spacing formula is used so checkpoints cluster near obstacles.
+        """
         # Checkpoint-based trajectory types
         if self.trajectory_type in ("checkpoint_path", "spline_path", "urban_path", "random_waypoint"):
             t, positions = self._checkpoint_positions(duration)
@@ -592,9 +608,10 @@ class ReferenceTrajectoryGenerator:
         self._trajectory = trajectory
         self._duration = float(trajectory[-1, 0]) if len(trajectory) > 1 else 0.0
         
-        # If checkpoint mode is enabled, generate checkpoints with curvature
         if self.checkpoint_mode and self.checkpoint_manager is not None:
-            checkpoints = self.generate_checkpoints_with_curvature()
+            checkpoints = self.generate_checkpoints_with_curvature(
+                obstacle_positions=obstacle_positions
+            )
             self.checkpoint_manager.set_checkpoints(checkpoints)
         
         return trajectory
@@ -604,76 +621,75 @@ class ReferenceTrajectoryGenerator:
         curvature_threshold_high: float = 2.0,
         curvature_threshold_low: float = 0.5,
         min_spacing: float = 0.1,
-        max_spacing: float = 1.0
+        max_spacing: float = 1.0,
+        obstacle_positions: Optional[np.ndarray] = None,
+        sensor_range: float = 5.0,
+        gamma: float = 0.5,
     ) -> List['Checkpoint']:
-        """
-        Generate checkpoints with curvature-aware spacing from cached trajectory.
+        """Generate checkpoints with curvature-aware (and optionally obstacle-aware) spacing.
+        
+        When *obstacle_positions* is provided the obstacle-density formula is
+        used in addition to curvature so that checkpoints cluster near obstacles.
         
         Args:
             curvature_threshold_high: High curvature threshold (1/m)
             curvature_threshold_low: Low curvature threshold (1/m)
             min_spacing: Minimum checkpoint spacing (m)
             max_spacing: Maximum checkpoint spacing (m)
+            obstacle_positions: (M, 2) array of obstacle centres, or None
+            sensor_range: Detection radius for obstacle density (m)
+            gamma: Exponential decay rate for obstacle density formula
             
         Returns:
             List of Checkpoint objects with curvature information
         """
         from ..navigation.checkpoint_manager import Checkpoint as CPCheckpoint
+        from .checkpoint_generator import (
+            generate_checkpoints,
+            generate_checkpoints_obstacle_aware,
+        )
         
         if self._trajectory is None:
             raise ValueError("Trajectory not generated. Call generate() first.")
         
-        # Compute curvature at each trajectory point
         curvature = self._compute_curvature()
-        
-        # Generate checkpoints with adaptive spacing
-        checkpoints = []
-        current_distance = 0.0
-        last_checkpoint_idx = 0
-        
-        for i in range(1, len(self._trajectory)):
-            # Compute distance traveled
-            dx = self._trajectory[i, 1] - self._trajectory[i-1, 1]
-            dy = self._trajectory[i, 2] - self._trajectory[i-1, 2]
-            current_distance += np.sqrt(dx**2 + dy**2)
-            
-            # Compute required spacing based on curvature
-            kappa = curvature[i]
-            if kappa >= curvature_threshold_high:
-                required_spacing = min_spacing
-            elif kappa <= curvature_threshold_low:
-                required_spacing = max_spacing
-            else:
-                # Linear interpolation
-                alpha = (kappa - curvature_threshold_low) / (curvature_threshold_high - curvature_threshold_low)
-                required_spacing = max_spacing - alpha * (max_spacing - min_spacing)
-            
-            # Add checkpoint if spacing threshold reached
-            if current_distance >= required_spacing:
-                checkpoint = CPCheckpoint(
-                    x=float(self._trajectory[i, 1]),
-                    y=float(self._trajectory[i, 2]),
-                    theta=float(self._trajectory[i, 3]),
-                    curvature=float(kappa),
-                    index=i
-                )
-                checkpoints.append(checkpoint)
-                current_distance = 0.0
-                last_checkpoint_idx = i
-        
-        # Always add the final point as a checkpoint
-        if last_checkpoint_idx < len(self._trajectory) - 1:
-            i = len(self._trajectory) - 1
-            checkpoint = CPCheckpoint(
-                x=float(self._trajectory[i, 1]),
-                y=float(self._trajectory[i, 2]),
-                theta=float(self._trajectory[i, 3]),
-                curvature=float(curvature[i]),
-                index=i
+        traj_4col = np.column_stack([
+            self._trajectory[:, 0],
+            self._trajectory[:, 1],
+            self._trajectory[:, 2],
+            self._trajectory[:, 3],
+        ])
+
+        if obstacle_positions is not None and len(obstacle_positions) > 0:
+            gen_cps = generate_checkpoints_obstacle_aware(
+                trajectory=traj_4col,
+                curvature=curvature,
+                obstacle_positions=np.asarray(obstacle_positions),
+                sensor_range=sensor_range,
+                gamma=gamma,
+                S_min=min_spacing,
+                S_max=max_spacing,
+                curvature_high=curvature_threshold_high,
+                curvature_low=curvature_threshold_low,
             )
-            checkpoints.append(checkpoint)
-        
-        return checkpoints
+        else:
+            gen_cps = generate_checkpoints(
+                trajectory=traj_4col,
+                curvature=curvature,
+                curvature_high=curvature_threshold_high,
+                curvature_low=curvature_threshold_low,
+                min_spacing=min_spacing,
+                max_spacing=max_spacing,
+            )
+
+        manager_cps = [
+            CPCheckpoint(
+                x=cp.x, y=cp.y, theta=cp.theta,
+                curvature=cp.curvature, index=cp.index,
+            )
+            for cp in gen_cps
+        ]
+        return manager_cps
     
     def _compute_curvature(self) -> np.ndarray:
         """
@@ -780,26 +796,30 @@ class ReferenceTrajectoryGenerator:
         position = np.asarray(state, dtype=float).reshape(-1)[:2]
         distances = np.linalg.norm(self._trajectory[:, 1:3] - position, axis=1)
         start_idx = int(np.argmin(distances))
-        return self.get_trajectory_segment(start_idx, horizon)
+        x_refs, u_refs = self.get_trajectory_segment(start_idx, horizon)
+        # Keep the same contract as CheckpointManager: u_refs has horizon-1 rows.
+        return x_refs, u_refs[:-1]
 
     def get_checkpoints(self) -> List[Checkpoint]:
         """Return the active checkpoint list."""
         points = self._resolve_checkpoint_points()
         return [Checkpoint(float(point[0]), float(point[1])) for point in points]
     
-    def update_checkpoint_manager(self, robot_position: np.ndarray, current_time: float) -> bool:
+    def update_checkpoint_manager(self, robot_position: np.ndarray, current_time: float, num_obstacles_in_horizon: int = 0) -> bool:
         """
         Update checkpoint manager with current robot position.
         
         Args:
-            robot_position: Current robot position [x, y] or [x, y, theta]
-            current_time: Current simulation time (s)
+            robot_position: Current position [x, y]
+            current_time: Current simulation time
+            num_obstacles_in_horizon: Number of obstacles detected in sensor range.
+             (s)
             
         Returns:
             True if checkpoint was switched, False otherwise
         """
-        if self.checkpoint_mode and self.checkpoint_manager is not None:
-            return self.checkpoint_manager.update(robot_position, current_time)
+        if self.checkpoint_mode and self.checkpoint_manager:
+            return self.checkpoint_manager.update(robot_position, current_time, num_obstacles_in_horizon)
         return False
     
     def get_checkpoint_metrics(self) -> Dict[str, float]:

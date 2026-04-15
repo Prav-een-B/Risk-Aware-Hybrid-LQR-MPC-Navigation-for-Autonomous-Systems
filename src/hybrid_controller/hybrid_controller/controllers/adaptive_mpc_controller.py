@@ -97,7 +97,9 @@ class LMSAdaptation:
 class AdaptiveMPCController:
     def __init__(self, prediction_horizon: int = 10, terminal_horizon: int = 5,
                  Q_diag: list = None, R_diag: list = None, T_diag: list = None,
+                 P_diag: list = None,
                  omega_term: float = 10.0, q_xi: float = 1000.0,
+                 slack_penalty: float = None,
                  d_safe: float = 0.3, v_max: float = 2.0, omega_max: float = 3.0,
                  dt: float = 0.02, enable_adaptation: bool = True,
                  adaptation_gamma: float = 0.005, theta_init: np.ndarray = None,
@@ -120,9 +122,16 @@ class AdaptiveMPCController:
         if Q_diag is None: Q_diag = [30.0, 30.0, 5.0]
         if R_diag is None: R_diag = [0.1, 0.1]
         
+        # Preserve compatibility with callers that pass a terminal weight as
+        # P_diag while this controller internally uses omega_term/T_diag.
+        if T_diag is None and P_diag is not None:
+            T_diag = P_diag
+
         self.Q = np.diag(Q_diag)
         self.R = np.diag(R_diag)
         self.omega_term = omega_term
+        if slack_penalty is not None:
+            q_xi = float(slack_penalty)
         self.q_xi = q_xi
         
         self.u_min = np.array([-v_max, -omega_max])

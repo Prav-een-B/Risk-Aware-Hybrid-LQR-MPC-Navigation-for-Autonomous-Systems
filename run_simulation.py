@@ -50,6 +50,7 @@ def build_trajectory_generator(
     dt: float,
     trajectory_type: str = "figure8",
     checkpoint_preset: str = "diamond",
+    checkpoint_mode: bool = False,
     amplitude: float = 2.0,
     frequency: float = 0.5,
 ) -> ReferenceTrajectoryGenerator:
@@ -61,6 +62,7 @@ def build_trajectory_generator(
         T_blend=0.5,
         trajectory_type=trajectory_type,
         checkpoint_preset=checkpoint_preset,
+        checkpoint_mode=checkpoint_mode,
     )
 
 
@@ -125,6 +127,12 @@ def get_reference_point(
     """
     if trajectory_type == "checkpoint_path" or traj_gen.checkpoint_mode:
         x_refs, u_refs = traj_gen.get_local_trajectory_segment(state, 1)
+        # CheckpointManager returns u_refs with shape (horizon-1, 2), so for
+        # horizon=1 there is no control row. Fall back to cached/global
+        # reference control to keep single-step controllers stable at the tail.
+        if u_refs.shape[0] == 0:
+            _, u_ref = traj_gen.get_reference_at_index(index)
+            return x_refs[0], u_ref
         return x_refs[0], u_refs[0]
     return traj_gen.get_reference_at_index(index)
 
@@ -149,7 +157,8 @@ def get_reference_segment(
 def run_lqr_simulation(duration: float = 20.0, dt: float = 0.02,
                        visualize: bool = True,
                        trajectory_type: str = "figure8",
-                       checkpoint_preset: str = "diamond") -> dict:
+                       checkpoint_preset: str = "diamond",
+                       checkpoint_mode: bool = False) -> dict:
     """
     Run LQR trajectory tracking simulation.
     
@@ -171,6 +180,7 @@ def run_lqr_simulation(duration: float = 20.0, dt: float = 0.02,
         dt=dt,
         trajectory_type=trajectory_type,
         checkpoint_preset=checkpoint_preset,
+        checkpoint_mode=checkpoint_mode,
     )
     lqr = LQRController(Q_diag=[15.0, 15.0, 8.0], R_diag=[0.1, 0.1], dt=dt, v_max=2.0, omega_max=3.0)
     logger = SimulationLogger(log_dir='logs', log_level='INFO', node_name='lqr_sim')
@@ -275,7 +285,8 @@ def run_mpc_simulation(duration: float = 20.0, dt: float = 0.02,
                        visualize: bool = True,
                        scenario: str = "default",
                        trajectory_type: str = "figure8",
-                       checkpoint_preset: str = "diamond") -> dict:
+                       checkpoint_preset: str = "diamond",
+                       checkpoint_mode: bool = False) -> dict:
     """
     Run MPC obstacle avoidance simulation.
     
@@ -298,6 +309,7 @@ def run_mpc_simulation(duration: float = 20.0, dt: float = 0.02,
         dt=dt,
         trajectory_type=trajectory_type,
         checkpoint_preset=checkpoint_preset,
+        checkpoint_mode=checkpoint_mode,
     )
     # OPTIMIZED MPC PARAMETERS for industry-standard tolerances
     # Target: heading ≤5°, latency ≤50ms, slack ≤5
@@ -328,8 +340,12 @@ def run_mpc_simulation(duration: float = 20.0, dt: float = 0.02,
     else:
         print("Scenario: none | Obstacles disabled")
     
+    obs_positions = np.array(
+        [[o['x'], o['y']] for o in obstacle_dicts], dtype=float
+    ).reshape(-1, 2) if obstacle_dicts else None
+
     # Generate reference trajectory
-    trajectory = traj_gen.generate(duration)
+    trajectory = traj_gen.generate(duration, obstacle_positions=obs_positions)
     N = len(trajectory)
     
     print(
@@ -457,7 +473,8 @@ def run_mpc_simulation(duration: float = 20.0, dt: float = 0.02,
 def run_comparison(duration: float = 20.0, dt: float = 0.02,
                    scenario: str = "default",
                    trajectory_type: str = "figure8",
-                   checkpoint_preset: str = "diamond") -> None:
+                   checkpoint_preset: str = "diamond",
+                   checkpoint_mode: bool = False) -> None:
     """
     Run comparison between LQR and MPC with obstacles.
     """
@@ -478,6 +495,7 @@ def run_comparison(duration: float = 20.0, dt: float = 0.02,
         dt=dt,
         trajectory_type=trajectory_type,
         checkpoint_preset=checkpoint_preset,
+        checkpoint_mode=checkpoint_mode,
     )
     lqr = LQRController(Q_diag=[15.0, 15.0, 8.0], R_diag=[0.1, 0.1], dt=dt, v_max=2.0, omega_max=3.0)
     trajectory = traj_gen.generate(duration)
@@ -553,7 +571,8 @@ def run_hybrid_simulation(duration: float = 20.0, dt: float = 0.02,
                           scenario: str = "default",
                           actuator_params: ActuatorParams = None,
                           trajectory_type: str = "figure8",
-                          checkpoint_preset: str = "diamond") -> dict:
+                          checkpoint_preset: str = "diamond",
+                          checkpoint_mode: bool = False) -> dict:
     """
     Run risk-aware hybrid LQR-MPC simulation with continuous blending.
     
@@ -583,6 +602,7 @@ def run_hybrid_simulation(duration: float = 20.0, dt: float = 0.02,
         dt=dt,
         trajectory_type=trajectory_type,
         checkpoint_preset=checkpoint_preset,
+        checkpoint_mode=checkpoint_mode,
     )
     
     # LQR for low-risk regions (efficient, stable)
@@ -640,8 +660,13 @@ def run_hybrid_simulation(duration: float = 20.0, dt: float = 0.02,
     scenario_label = f"{scenario} (dynamic)" if scenario in DYNAMIC_SCENARIOS else scenario
     print(f"Scenario: {scenario_label} | Added {len(obstacle_dicts)} obstacles")
     
+    # Extract obstacle positions for obstacle-aware checkpoint generation
+    obs_positions = np.array(
+        [[o['x'], o['y']] for o in obstacle_dicts], dtype=float
+    ).reshape(-1, 2) if obstacle_dicts else None
+
     # Generate trajectory
-    trajectory = traj_gen.generate(duration)
+    trajectory = traj_gen.generate(duration, obstacle_positions=obs_positions)
     N = len(trajectory)
     print(f"Trajectory: {describe_trajectory(trajectory_type, checkpoint_preset)}")
     
@@ -895,7 +920,8 @@ def run_adaptive_simulation(duration: float = 20.0, dt: float = 0.02,
                             visualize: bool = True,
                             scenario: str = "default",
                             trajectory_type: str = "figure8",
-                            checkpoint_preset: str = "diamond") -> dict:
+                            checkpoint_preset: str = "diamond",
+                            checkpoint_mode: bool = False) -> dict:
     """
     Run adaptive MPC obstacle avoidance simulation.
 
@@ -913,6 +939,7 @@ def run_adaptive_simulation(duration: float = 20.0, dt: float = 0.02,
         dt=dt,
         trajectory_type=trajectory_type,
         checkpoint_preset=checkpoint_preset,
+        checkpoint_mode=checkpoint_mode,
     )
 
     adaptive_mpc = AdaptiveMPCController(
@@ -943,7 +970,11 @@ def run_adaptive_simulation(duration: float = 20.0, dt: float = 0.02,
     else:
         print("Scenario: none | Obstacles disabled")
 
-    trajectory = traj_gen.generate(duration)
+    obs_positions = np.array(
+        [[o['x'], o['y']] for o in obstacle_dicts], dtype=float
+    ).reshape(-1, 2) if obstacle_dicts else None
+
+    trajectory = traj_gen.generate(duration, obstacle_positions=obs_positions)
     N = len(trajectory)
 
     print(
@@ -1121,7 +1152,8 @@ def run_hybrid_adaptive_simulation(duration: float = 20.0, dt: float = 0.02,
                                    scenario: str = "default",
                                    actuator_params: ActuatorParams = None,
                                    trajectory_type: str = "figure8",
-                                   checkpoint_preset: str = "diamond") -> dict:
+                                   checkpoint_preset: str = "diamond",
+                                   checkpoint_mode: bool = False) -> dict:
     """
     Run risk-aware hybrid LQR + Adaptive MPC simulation with smooth blending.
     """
@@ -1136,6 +1168,7 @@ def run_hybrid_adaptive_simulation(duration: float = 20.0, dt: float = 0.02,
         dt=dt,
         trajectory_type=trajectory_type,
         checkpoint_preset=checkpoint_preset,
+        checkpoint_mode=checkpoint_mode,
     )
 
     lqr = LQRController(
@@ -1192,7 +1225,11 @@ def run_hybrid_adaptive_simulation(duration: float = 20.0, dt: float = 0.02,
     scenario_label = f"{scenario} (dynamic)" if scenario in DYNAMIC_SCENARIOS else scenario
     print(f"Scenario: {scenario_label} | Added {len(obstacle_dicts)} obstacles")
 
-    trajectory = traj_gen.generate(duration)
+    obs_positions = np.array(
+        [[o['x'], o['y']] for o in obstacle_dicts], dtype=float
+    ).reshape(-1, 2) if obstacle_dicts else None
+
+    trajectory = traj_gen.generate(duration, obstacle_positions=obs_positions)
     N = len(trajectory)
     print(f"Trajectory: {describe_trajectory(trajectory_type, checkpoint_preset)}")
 
@@ -1491,6 +1528,8 @@ def main():
                         choices=CHECKPOINT_PRESET_CHOICES,
                         default='diamond',
                         help='Checkpoint preset when --trajectory checkpoint_path is used')
+    parser.add_argument('--checkpoint-mode', action='store_true',
+                        help='Enable checkpoint-based tracking (adaptive switching)')
     parser.add_argument('--no-plot', action='store_true', help='Disable plotting')
     parser.add_argument('--realistic', action='store_true', help='Enable actuator dynamics (lag, delay, noise)')
     
@@ -1516,6 +1555,7 @@ def main():
             visualize=not args.no_plot,
             trajectory_type=args.trajectory,
             checkpoint_preset=args.checkpoint_preset,
+            checkpoint_mode=args.checkpoint_mode,
         )
     elif args.mode == 'mpc':
         run_mpc_simulation(
@@ -1525,6 +1565,7 @@ def main():
             scenario=args.scenario,
             trajectory_type=args.trajectory,
             checkpoint_preset=args.checkpoint_preset,
+            checkpoint_mode=args.checkpoint_mode,
         )
     elif args.mode == 'compare':
         run_comparison(
@@ -1533,6 +1574,7 @@ def main():
             scenario=args.scenario,
             trajectory_type=args.trajectory,
             checkpoint_preset=args.checkpoint_preset,
+            checkpoint_mode=args.checkpoint_mode,
         )
     elif args.mode == 'hybrid':
         run_hybrid_simulation(
@@ -1543,6 +1585,7 @@ def main():
             actuator_params=act_params,
             trajectory_type=args.trajectory,
             checkpoint_preset=args.checkpoint_preset,
+            checkpoint_mode=args.checkpoint_mode,
         )
     elif args.mode == 'adaptive':
         run_adaptive_simulation(
@@ -1552,6 +1595,7 @@ def main():
             scenario=args.scenario,
             trajectory_type=args.trajectory,
             checkpoint_preset=args.checkpoint_preset,
+            checkpoint_mode=args.checkpoint_mode,
         )
     elif args.mode == 'hybrid_adaptive':
         run_hybrid_adaptive_simulation(
@@ -1562,6 +1606,7 @@ def main():
             actuator_params=act_params,
             trajectory_type=args.trajectory,
             checkpoint_preset=args.checkpoint_preset,
+            checkpoint_mode=args.checkpoint_mode,
         )
     
     print("\nSimulation complete!")

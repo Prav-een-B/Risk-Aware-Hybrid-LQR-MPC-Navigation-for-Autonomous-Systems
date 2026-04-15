@@ -108,13 +108,14 @@ class CheckpointManager:
             return self.checkpoints[self.current_idx]
         return None
     
-    def update(self, robot_position: np.ndarray, current_time: float) -> bool:
+    def update(self, robot_position: np.ndarray, current_time: float, num_obstacles_in_horizon: int = 0) -> bool:
         """
         Update checkpoint manager with current robot position.
         
         Args:
             robot_position: Current robot position [x, y] or [x, y, theta]
             current_time: Current simulation time (s)
+            num_obstacles_in_horizon: Number of obstacles detected in sensor range.
         
         Returns:
             True if checkpoint was switched, False otherwise
@@ -133,24 +134,27 @@ class CheckpointManager:
         # Update minimum distance achieved
         current_cp.min_distance = min(current_cp.min_distance, distance)
         
-        # Compute adaptive switching radius
-        self._update_switching_radius(current_cp.curvature)
+        # Compute curvature-adapted baseline radius and apply hysteresis after
+        # updating the progress direction state.
+        base_radius = self._compute_base_radius(current_cp.curvature)
         
         # Check forward progress
         if distance > self.last_distance:
             # Moving away from checkpoint
             self.no_progress_time += self.dt
             if not self.hysteresis_active:
-                # Activate hysteresis: increase radius
-                self.switching_radius += self.hysteresis_margin
+                # Activate hysteresis: increase radius around the adapted base.
                 self.hysteresis_active = True
         else:
             # Moving toward checkpoint
             self.no_progress_time = 0.0
             if self.hysteresis_active:
-                # Deactivate hysteresis: restore radius
-                self.switching_radius -= self.hysteresis_margin
+                # Deactivate hysteresis: restore adapted base radius.
                 self.hysteresis_active = False
+
+        self.switching_radius = base_radius + (
+            self.hysteresis_margin if self.hysteresis_active else 0.0
+        )
         
         self.last_distance = distance
         
@@ -165,7 +169,7 @@ class CheckpointManager:
         
         return False
     
-    def _update_switching_radius(self, curvature: float) -> None:
+    def _compute_base_radius(self, curvature: float) -> float:
         """
         Update switching radius based on curvature.
         
@@ -179,14 +183,19 @@ class CheckpointManager:
             curvature: Local curvature at checkpoint (1/m)
         """
         adjustment = self.curvature_scaling * curvature
-        self.switching_radius = max(
+        return max(
             self.base_radius - adjustment,
             0.1  # Minimum radius
         )
     
     def _advance_checkpoint(self, current_time: float, distance: float) -> bool:
         """
-        Advance to next checkpoint and record metrics.
+        Advance to the next checkpoint and record metrics.
+        
+        Obstacle-density adaptation is handled at checkpoint *generation* time
+        (via generate_checkpoints_obstacle_aware), not by skipping pre-placed
+        checkpoints at runtime.  Every checkpoint must be visited to form a
+        robust path.
         
         Args:
             current_time: Current simulation time (s)
@@ -209,7 +218,6 @@ class CheckpointManager:
             time_delta = current_time - self.checkpoints[self.current_idx - 1].time_reached
             self.checkpoint_times.append(time_delta)
         
-        # Advance to next checkpoint
         self.current_idx += 1
         self.last_distance = float('inf')
         self.no_progress_time = 0.0
@@ -223,44 +231,46 @@ class CheckpointManager:
         """
         Extract local reference horizon for MPC.
         
-        Args:
-            robot_state: Current robot state [x, y, theta]
-            horizon: Number of future steps (N+1 for MPC)
-            
-        Returns:
-            x_refs: (horizon, 3) reference states
-            u_refs: (horizon-1, 2) reference controls
+        Generates a kinematically feasible sequence of setpoints taking linear steps 
+        towards the active checkpoint from the robot's current position to avoid 
+        impossible velocity requests that break tracking solvers.
         """
         x_refs = np.zeros((horizon, 3))
         u_refs = np.zeros((horizon - 1, 2))
         
-        # Fill from current checkpoint forward
+        current_pos = robot_state.copy()
+        target_cp_idx = self.current_idx
+        v_max_ref = 1.0
+        
         for i in range(horizon):
-            cp_idx = min(self.current_idx + i, len(self.checkpoints) - 1)
-            cp = self.checkpoints[cp_idx]
-            
-            x_refs[i] = [cp.x, cp.y, cp.theta]
+            x_refs[i] = current_pos
             
             if i < horizon - 1:
-                # Compute reference velocity from checkpoint spacing
-                next_cp_idx = min(cp_idx + 1, len(self.checkpoints) - 1)
-                next_cp = self.checkpoints[next_cp_idx]
+                target_cp = self.checkpoints[min(target_cp_idx, len(self.checkpoints) - 1)]
+                dx = target_cp.x - current_pos[0]
+                dy = target_cp.y - current_pos[1]
+                dist = np.sqrt(dx**2 + dy**2)
                 
-                dx = next_cp.x - cp.x
-                dy = next_cp.y - cp.y
-                distance = np.sqrt(dx**2 + dy**2)
+                if dist < 0.05 and target_cp_idx < len(self.checkpoints) - 1:
+                    target_cp_idx += 1
+                    target_cp = self.checkpoints[target_cp_idx]
+                    dx = target_cp.x - current_pos[0]
+                    dy = target_cp.y - current_pos[1]
+                    dist = np.sqrt(dx**2 + dy**2)
+                    
+                heading = np.arctan2(dy, dx)
                 
-                # Reference velocity (assume constant speed)
-                v_ref = min(distance / self.dt, 1.0)  # Cap at 1 m/s
+                v_ref = min(dist / self.dt, v_max_ref) if dist > 0 else 0.0
                 
-                # Reference angular velocity from heading change
-                dtheta = next_cp.theta - cp.theta
-                # Normalize to [-pi, pi]
-                while dtheta > np.pi: 
-                    dtheta -= 2*np.pi
-                while dtheta < -np.pi: 
-                    dtheta += 2*np.pi
-                omega_ref = dtheta / self.dt
+                prev_heading = current_pos[2]
+                next_x = current_pos[0] + v_ref * np.cos(heading) * self.dt
+                next_y = current_pos[1] + v_ref * np.sin(heading) * self.dt
+                current_pos = np.array([next_x, next_y, heading])
+                
+                dtheta = heading - prev_heading
+                while dtheta > np.pi: dtheta -= 2 * np.pi
+                while dtheta < -np.pi: dtheta += 2 * np.pi
+                omega_ref = np.clip(dtheta / self.dt, -3.0, 3.0)
                 
                 u_refs[i] = [v_ref, omega_ref]
         

@@ -59,6 +59,9 @@ Last updated: 2026-04-06
 
 | Reference | Link | Why It Matters |
 |---|---|---|
+| Jules Antoine Lissajous (1857). "Mémoire sur l'étude optique des mouvements vibratoires." | Historical proceedings record (Annales de Chimie et de Physique, 1857) | Historical origin of Lissajous parametric curves used in trajectory benchmarking |
+| Thierry Fraichard, Antoine Scheuer (2004). "From Reeds and Shepp's to Continuous-Curvature Paths." | https://doi.org/10.1109/TRO.2004.829462 | Foundational curvature-continuous path planning reference relevant to clothoid and smooth turning trajectories |
+| Yoshiaki Kuwata, Emilio Frazzoli, Francesco Borrelli, Glenn Fiore, Sean Schouwenaars, Jonathan How (2009). "Real-time Motion Planning with Applications to Autonomous Urban Driving." | https://doi.org/10.1109/TCST.2008.2009646 | Canonical real-time checkpoint/waypoint-local planning architecture for urban navigation |
 | Himanshu, Raja Rout, Tarun Kumar Bera, Nizar Chatti (2025). "Fault tolerant self-reconfigurable waypoint guidance for mobile robots under actuator faults." | https://doi.org/10.1016/j.jfranklin.2025.107735 | Supports waypoint-guidance as a serious control problem rather than a visualization feature |
 | Tao Ma, Burkhard Corves (2025). "Model Predictive Control-based dynamic movement primitives for trajectory learning and obstacle avoidance." | https://doi.org/10.1016/j.robot.2025.105027 | Relevant for building a broader trajectory and checkpoint benchmark suite |
 

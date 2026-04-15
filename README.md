@@ -45,7 +45,7 @@ This project implements a **smooth supervisory hybrid control system** for auton
 - Safety/sensing-aware obstacle inflation via `InflationConfig`
 - Hybrid LQR + Adaptive MPC runtime mode (`--mode hybrid_adaptive`)
 - Risk-based supervisory control with feasibility fallback
-- Multiple trajectory families: figure-8, circle, clover, slalom, checkpoint paths
+- Multiple trajectory families including seven extended types: lissajous, spiral, spline_path, urban_path, sinusoidal, random_waypoint, clothoid
 - Comprehensive logging (JSON/CSV export)
 - Standalone simulation (no ROS2 required) + full ROS2 integration
 - Docker validation suite and ROS2/Gazebo harness
@@ -163,6 +163,11 @@ python run_simulation.py --mode hybrid_adaptive
 python run_simulation.py --mode lqr --trajectory circle
 python run_simulation.py --mode hybrid --trajectory slalom
 python run_simulation.py --mode lqr --trajectory checkpoint_path --checkpoint-preset warehouse
+python run_simulation.py --mode hybrid --trajectory lissajous
+python run_simulation.py --mode mpc --trajectory clothoid
+
+# Checkpoint-based tracking mode
+python run_simulation.py --mode hybrid --trajectory urban_path --checkpoint-mode
 
 # Dynamic obstacle scenarios
 python run_simulation.py --mode hybrid --scenario moving --duration 10 --no-plot
@@ -294,6 +299,7 @@ python run_simulation.py --mode hybrid_adaptive  # Hybrid LQR + Adaptive MPC
 python run_simulation.py --mode hybrid --duration 30 --scenario dense
 python run_simulation.py --mode hybrid --scenario corridor --no-plot
 python run_simulation.py --mode hybrid --scenario moving --duration 10 --no-plot
+python run_simulation.py --mode hybrid --trajectory lissajous --checkpoint-mode --no-plot
 ```
 
 **Obstacle Scenarios:**
@@ -314,6 +320,19 @@ python run_simulation.py --mode hybrid --scenario moving --duration 10 --no-plot
 | `clover` | Three-lobed clover pattern |
 | `slalom` | S-curve slalom |
 | `checkpoint_path` | Waypoint-based path (use `--checkpoint-preset`) |
+| `lissajous` | Parametric Lissajous curve with configurable harmonics |
+| `spiral` | Outward spiral trajectory with increasing radius |
+| `spline_path` | Cubic spline path through waypoints |
+| `urban_path` | Orthogonal street-like path with 90 degree turns |
+| `sinusoidal` | Forward motion with sinusoidal lateral oscillation |
+| `random_waypoint` | Piecewise-linear trajectory through random waypoints |
+| `clothoid` | Euler spiral with linearly changing curvature |
+
+**Checkpoint Tracking Flags:**
+| Flag | Description |
+|------|-------------|
+| `--checkpoint-mode` | Enable adaptive checkpoint switching and local horizon extraction |
+| `--checkpoint-preset` | Select a preset when using `--trajectory checkpoint_path` |
 
 ### Statistical Validation (Monte Carlo)
 
@@ -419,11 +438,13 @@ An experimental adaptive controller in `adaptive_mpc_controller.py` adds:
 
 Based on: Koehler (2025), *Certainty-equivalent adaptive MPC for uncertain nonlinear systems*, arXiv:2603.17843
 
-**Status:** Implemented and tested in standalone simulation; not yet wired into the CLI runner or statistical evaluation as a comparison mode.
+**Status:** Implemented and wired into standalone CLI runner (`--mode adaptive`, `--mode hybrid_adaptive`) and integrated with checkpoint-capable reference extraction.
 
 ### Trajectory Families
 
-`reference_generator.py` now supports: figure-8, circle, clover, slalom, and checkpoint-path presets (e.g., `warehouse`). Checkpoint paths are currently precomputed; local online checkpoint-horizon generation is planned.
+`reference_generator.py` supports 12 families: `figure8`, `circle`, `clover`, `slalom`, `checkpoint_path`, plus seven extended types (`lissajous`, `spiral`, `spline_path`, `urban_path`, `sinusoidal`, `random_waypoint`, `clothoid`).
+
+Checkpoint mode is available via `--checkpoint-mode` and uses curvature-aware checkpoint generation with adaptive switching and local reference-horizon extraction.
 
 ### Docker and Gazebo Harness
 

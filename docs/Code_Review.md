@@ -413,6 +413,13 @@ $$p_x(t) = A\sin(at), \quad p_y(t) = \frac{A}{2}\sin(2at)$$
 | `clover` | Three-lobed clover pattern |
 | `slalom` | S-curve slalom |
 | `checkpoint_path` | Waypoint-based path with presets (e.g. `warehouse`) |
+| `lissajous` | General Lissajous curve with tunable harmonics |
+| `spiral` | Polar spiral with linearly increasing radius |
+| `spline_path` | Cubic spline interpolation through waypoints |
+| `urban_path` | Segment path with orthogonal turns |
+| `sinusoidal` | Linear progress with sinusoidal lateral offset |
+| `random_waypoint` | Piecewise-linear path through random waypoints |
+| `clothoid` | Euler spiral with linearly varying curvature |
 
 ##### `generate(self, duration) → np.ndarray`
 
@@ -422,8 +429,36 @@ Output shape `(N, 6)`: `[time, px, py, theta, v, omega]`
 
 Extracts `(x_refs, u_refs)` for MPC prediction horizon.
 
-**Note:** Checkpoint paths are currently precomputed into sampled references.
-Local online checkpoint-horizon generation is planned.
+### 4.2 Checkpoint-Based Navigation Stack
+
+The trajectory stack now supports full checkpoint-mode tracking with
+curvature-aware generation and adaptive switching logic.
+
+#### CurvatureComputer
+
+- Computes finite-difference curvature from sampled trajectories.
+- Uses epsilon clamping for numerical stability.
+- Feeds curvature values to adaptive checkpoint spacing.
+
+#### CheckpointGenerator
+
+- Converts trajectories into checkpoint sequences with adaptive spacing.
+- Uses interpolation between min/max spacing based on local curvature.
+- Stores checkpoint state including heading, curvature, and tracking metadata.
+
+#### CheckpointManager
+
+- Maintains current checkpoint index and progress metrics.
+- Applies adaptive switching radius based on curvature.
+- Uses hysteresis and forward-progress timeout for robust transitions.
+- Extracts local reference horizons for MPC/Adaptive MPC and single-step
+    references for LQR.
+
+#### Enhanced Dynamic Obstacle Field
+
+- Supports controller/risk/actual obstacle views.
+- Includes velocity-aware and sensing-aware radius inflation.
+- Supports bounded random-walk motion with reflection/wrapping.
 
 ---
 
@@ -468,12 +503,15 @@ python run_simulation.py --mode compare
 python run_simulation.py --mode hybrid
 python run_simulation.py --mode hybrid --trajectory slalom --scenario dense
 python run_simulation.py --mode lqr --trajectory checkpoint_path --checkpoint-preset warehouse
+python run_simulation.py --mode hybrid --trajectory lissajous --checkpoint-mode
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--mode` | `lqr`, `mpc`, `compare`, `hybrid`, `adaptive`, `hybrid_adaptive` |
-| `--trajectory` | `figure8`, `circle`, `clover`, `slalom`, `checkpoint_path` |
+| `--trajectory` | `figure8`, `circle`, `clover`, `slalom`, `checkpoint_path`, `lissajous`, `spiral`, `spline_path`, `urban_path`, `sinusoidal`, `random_waypoint`, `clothoid` |
+| `--checkpoint-mode` | Enables checkpoint-based adaptive switching and local horizon references |
+| `--checkpoint-preset` | Preset route for `checkpoint_path` trajectories |
 | `--scenario` | `default`, `sparse`, `dense`, `corridor`, `moving`, `random_walk` |
 | `--duration` | Simulation duration (seconds) |
 | `--no-plot` | Disable visualization |
@@ -542,15 +580,15 @@ not full plant-in-Gazebo integration.
 | Smooth hybrid supervisor | ✅ Integrated and benchmarked |
 | Risk metrics | ✅ Integrated (dynamic obstacle view wired in standalone) |
 | Adaptive MPC (CasADi) | ✅ Integrated in standalone CLI (`adaptive`, `hybrid_adaptive`) |
-| Trajectory families | ✅ figure-8, circle, clover, slalom, checkpoints |
-| Checkpoint-horizon (online) | ⚠️ Planned |
+| Trajectory families | ✅ 12 families including lissajous, spiral, spline_path, urban_path, sinusoidal, random_waypoint, clothoid |
+| Checkpoint-horizon (online) | ✅ Implemented with adaptive switching and reference extraction |
 | Docker validation | ✅ Syntax-checked, not end-to-end tested |
 | Gazebo harness | ⚠️ Controller-in-loop only |
 
 ### Priority Roadmap
 
 1. Extend `evaluation/statistical_runner.py` to include adaptive and hybrid-adaptive modes
-2. Replace precomputed checkpoint curves with local online checkpoint-horizon generation
+2. Expand checkpoint benchmark coverage across all scenarios and controller modes
 3. Add richer uncertainty propagation to risk/inflation beyond geometric inflation
 4. Replace the lightweight ROS odom shim with a full Gazebo robot model
 5. Benchmark all five modes at scale: LQR, MPC, Hybrid, Adaptive MPC, Hybrid+Adaptive

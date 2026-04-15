@@ -18,6 +18,61 @@ Reference textbooks for theoretical foundations:
 
 ---
 
+## [0.7.4] - 2026-04-12
+
+### Feature: Checkpoint-Based Trajectory Tracking
+
+This release completes the checkpoint-based tracking architecture for
+standalone and evaluation workflows, including trajectory generation,
+checkpoint management, uncertainty-aware obstacle handling, and reporting.
+
+#### What changed
+
+1. Extended trajectory generation with seven additional families:
+   - `lissajous`
+   - `spiral`
+   - `spline_path`
+   - `urban_path`
+   - `sinusoidal`
+   - `random_waypoint`
+   - `clothoid`
+2. Added curvature-aware checkpoint generation and finite-difference curvature
+   computation for adaptive checkpoint spacing.
+3. Added `CheckpointManager` with:
+   - curvature-dependent switching radius
+   - hysteresis-aware switching behavior
+   - forward-progress timeout handling
+   - local reference-horizon extraction for predictive controllers
+4. Integrated checkpoint mode across controller paths (LQR, MPC, Adaptive MPC,
+   Hybrid, Hybrid-Adaptive) through `--checkpoint-mode` and
+   checkpoint-aware reference extraction.
+5. Extended obstacle and uncertainty infrastructure with:
+   - dynamic random-walk obstacle motion
+   - boundary reflection and wrapping
+   - velocity- and sensing-aware obstacle inflation
+   - process noise, sensor noise, mismatch scaling, and control-delay modeling
+6. Added five checkpoint-ready evaluation scenarios and extended metrics with
+   checkpoint completion, checkpoint timing, and overshoot statistics.
+7. Added broad property/integration coverage for trajectory formulas,
+   checkpoint switching/horizon behavior, obstacle inflation/sensing, and
+   uncertainty mechanisms.
+
+#### Why this changed
+
+The previous reference workflow relied mainly on precomputed sampled
+trajectories. The new checkpoint pipeline supports tighter turns, local
+progress guarantees, and more realistic dynamic-obstacle/uncertainty stress
+tests while preserving backward compatibility.
+
+#### Validation
+
+- Property tests were added for trajectory structure/formulas, checkpoint
+  spacing/switching/horizon extraction, obstacle inflation/sensing, and
+  uncertainty injection.
+- Integration paths now expose checkpoint mode in CLI and statistical workflow.
+
+---
+
 ## [0.7.3] - 2026-04-06
 
 ### Feature: Runnable Dynamic Scenarios + Adaptive and Hybrid-Adaptive Modes

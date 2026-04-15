@@ -9,11 +9,28 @@ simulation:
   
 # Trajectory parameters
 trajectory:
-  type: "figure8"             # figure8, circle, clover, slalom, checkpoint_path
-  checkpoint_preset: "diamond" # Used when type=checkpoint_path
+  type: "figure8"             # figure8, circle, clover, slalom, checkpoint_path, lissajous, spiral, spline_path, urban_path, sinusoidal, random_waypoint, clothoid
+  checkpoint_preset: "diamond" # Used when type=checkpoint_path (diamond, square, triangle, pentagon, hexagon, star, spiral)
+  checkpoint_mode: false      # Enable checkpoint-based tracking with adaptive switching
   nominal_speed: 0.8          # Target speed along checkpoint paths (m/s)
   amplitude: 2.0              # Spatial size of analytic trajectories (meters)
   frequency: 0.5              # Angular frequency of analytic trajectories (rad/s)
+
+# Checkpoint generation parameters
+checkpoint_generation:
+  min_spacing: 0.1            # Minimum distance between checkpoints (meters)
+  max_spacing: 1.0            # Maximum distance between checkpoints (meters)
+  curvature_threshold_low: 0.1  # Low curvature threshold (1/m)
+  curvature_threshold_high: 2.0 # High curvature threshold (1/m)
+  alpha: 1.0                  # Curvature-to-spacing interpolation factor
+
+# Checkpoint manager parameters
+checkpoint_manager:
+  base_switching_radius: 0.3  # Base radius for checkpoint switching (meters)
+  curvature_scaling: 0.1      # Curvature-dependent radius reduction factor
+  hysteresis_margin: 0.05     # Hysteresis band to prevent chattering (meters)
+  forward_progress_timeout: 1.0 # Timeout for forward progress requirement (seconds)
+  v_max: 1.0                  # Maximum reference velocity (m/s)
   
 # Robot parameters
 robot:
@@ -52,3 +69,35 @@ logging:
   export_csv: true            # Export state history to CSV
   export_json: true           # Export structured logs to JSON
   output_dir: "logs"          # Log output directory
+
+# Evaluation scenarios
+scenarios:
+  baseline_static:
+    description: "Lissajous trajectory with sparse static obstacles, no uncertainty"
+    trajectory_type: "lissajous"
+    obstacle_scenario: "sparse"
+    uncertainty: "none"
+    
+  urban_dynamic:
+    description: "Urban path with moving obstacles, moderate uncertainty"
+    trajectory_type: "urban_path"
+    obstacle_scenario: "moving"
+    uncertainty: "moderate"
+    
+  stochastic_navigation:
+    description: "Sinusoidal trajectory with random walk obstacles, high uncertainty"
+    trajectory_type: "sinusoidal"
+    obstacle_scenario: "random_walk"
+    uncertainty: "high"
+    
+  oscillatory_tracking:
+    description: "High-frequency Lissajous with dense static obstacles, low uncertainty"
+    trajectory_type: "lissajous"
+    obstacle_scenario: "dense"
+    uncertainty: "low"
+    
+  vehicle_realistic:
+    description: "Clothoid trajectory through corridor with realistic vehicle constraints"
+    trajectory_type: "clothoid"
+    obstacle_scenario: "corridor"
+    uncertainty: "realistic"

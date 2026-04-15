@@ -43,7 +43,12 @@ from hybrid_controller.controllers.hybrid_blender import BlendingSupervisor
 from hybrid_controller.controllers.risk_metrics import RiskMetrics
 from hybrid_controller.trajectory.reference_generator import ReferenceTrajectoryGenerator
 from hybrid_controller.logging.simulation_logger import SimulationLogger
-from evaluation.scenarios import ObstacleConfig, InflationConfig, get_generator
+from evaluation.scenarios import (
+    ObstacleConfig, InflationConfig, get_generator,
+    get_baseline_static_scenario, get_urban_dynamic_scenario,
+    get_stochastic_navigation_scenario, get_oscillatory_tracking_scenario,
+    get_vehicle_realistic_scenario
+)
 
 
 BLENDED_MODES = {'hybrid', 'hybrid_adaptive'}
@@ -122,6 +127,13 @@ class RunMetrics:
     blend_weight_std: float = 0.0
     smooth_transitions: int = 0
     wall_time_s: float = 0.0
+    # Checkpoint metrics
+    checkpoint_completion_rate: float = 0.0
+    mean_time_to_checkpoint: float = 0.0
+    mean_checkpoint_overshoot: float = 0.0
+    checkpoints_reached: int = 0
+    checkpoints_missed: int = 0
+    tracking_mode: str = 'continuous'
     
 
 @dataclass
@@ -142,7 +154,10 @@ def run_single_config(mode: str,
                        noise_config: NoiseConfig,
                        duration: float = 20.0,
                        dt: float = 0.02,
-                       config_id: int = 0) -> RunMetrics:
+                       config_id: int = 0,
+                       trajectory_type: str = 'figure8',
+                       checkpoint_mode: bool = False,
+                       tuning: Optional[Dict[str, Any]] = None) -> RunMetrics:
     """
     Run a single simulation with given controller mode and obstacle config.
     
@@ -161,6 +176,8 @@ def run_single_config(mode: str,
         duration: Simulation duration (seconds)
         dt: Time step (seconds)
         config_id: Config index for identification
+        trajectory_type: Trajectory type (Task 11.1)
+        checkpoint_mode: Enable checkpoint-based tracking (Task 11.1)
         
     Returns:
         RunMetrics with all collected performance data
@@ -170,8 +187,31 @@ def run_single_config(mode: str,
     rng = np.random.RandomState(obstacle_config.seed)
 
     # -- Initialize components --
+    tuning = tuning or {}
+
+    mpc_horizon = int(tuning.get('mpc_horizon', 5))
+    mpc_q_diag = tuning.get('mpc_q_diag', [80.0, 80.0, 120.0])
+    mpc_r_diag = tuning.get('mpc_r_diag', [0.1, 0.1])
+    mpc_p_diag = tuning.get('mpc_p_diag', [20.0, 20.0, 40.0])
+    mpc_s_diag = tuning.get('mpc_s_diag', [0.1, 0.5])
+    mpc_j_diag = tuning.get('mpc_j_diag', [0.05, 0.3])
+
+    risk_d_safe = float(tuning.get('risk_d_safe', 0.3))
+    risk_d_trigger = float(tuning.get('risk_d_trigger', 1.0))
+    risk_threshold_low = float(tuning.get('risk_threshold_low', 0.2))
+    risk_threshold_medium = float(tuning.get('risk_threshold_medium', 0.5))
+
+    blend_k_sigmoid = float(tuning.get('blend_k_sigmoid', 10.0))
+    blend_risk_threshold = float(tuning.get('blend_risk_threshold', 0.3))
+    blend_dw_max = float(tuning.get('blend_dw_max', 2.0))
+    blend_hysteresis_band = float(tuning.get('blend_hysteresis_band', 0.05))
     robot = DifferentialDriveRobot(v_max=2.0, omega_max=3.0)
-    traj_gen = ReferenceTrajectoryGenerator(A=2.0, a=0.5, dt=dt, T_blend=0.5)
+    # Task 11.1: Initialize trajectory generator with checkpoint mode support
+    traj_gen = ReferenceTrajectoryGenerator(
+        A=2.0, a=0.5, dt=dt, T_blend=0.5,
+        trajectory_type=trajectory_type,
+        checkpoint_mode=checkpoint_mode
+    )
     
     lqr = LQRController(Q_diag=[15.0, 15.0, 8.0], R_diag=[0.1, 0.1],
                          dt=dt, v_max=2.0, omega_max=3.0)
@@ -180,8 +220,8 @@ def run_single_config(mode: str,
     linearizer = None
     if mode in {'mpc', 'hard_switch', 'hybrid'}:
         mpc = CVXPYgenWrapper(
-            horizon=5, Q_diag=[80.0, 80.0, 120.0], R_diag=[0.1, 0.1],
-            P_diag=[20.0, 20.0, 40.0], S_diag=[0.1, 0.5], J_diag=[0.05, 0.3],
+            horizon=mpc_horizon, Q_diag=mpc_q_diag, R_diag=mpc_r_diag,
+            P_diag=mpc_p_diag, S_diag=mpc_s_diag, J_diag=mpc_j_diag,
             v_max=2.0, omega_max=3.0, solver_name='OSQP'
         )
         linearizer = Linearizer(dt=dt)
@@ -206,13 +246,13 @@ def run_single_config(mode: str,
         )
     
     risk_metrics = RiskMetrics(
-        d_safe=0.3, d_trigger=1.0, alpha=0.6, beta=0.4,
-        threshold_low=0.2, threshold_medium=0.5
+        d_safe=risk_d_safe, d_trigger=risk_d_trigger, alpha=0.6, beta=0.4,
+        threshold_low=risk_threshold_low, threshold_medium=risk_threshold_medium
     )
     
     blender = BlendingSupervisor(
-        k_sigmoid=10.0, risk_threshold=0.3, dw_max=2.0,
-        hysteresis_band=0.05, solver_time_limit=5.0,
+        k_sigmoid=blend_k_sigmoid, risk_threshold=blend_risk_threshold, dw_max=blend_dw_max,
+        hysteresis_band=blend_hysteresis_band, solver_time_limit=5.0,
         feasibility_decay=0.8, dt=dt
     )
     
@@ -221,9 +261,19 @@ def run_single_config(mode: str,
         seed=obstacle_config.seed,
     )
     
+    # Extract obstacle positions for obstacle-aware checkpoint generation
+    obs_positions = np.array(
+        [[obs.x, obs.y] for obs in obstacle_field.actual_obstacles()],
+        dtype=float,
+    ).reshape(-1, 2) if obstacle_field.actual_obstacles() else np.empty((0, 2))
+
     # -- Generate trajectory --
-    trajectory = traj_gen.generate(duration)
+    trajectory = traj_gen.generate(duration, obstacle_positions=obs_positions)
     N = len(trajectory)
+    
+    checkpoint_manager = None
+    if checkpoint_mode and hasattr(traj_gen, 'checkpoint_manager'):
+        checkpoint_manager = traj_gen.checkpoint_manager
     
     x_ref_init, _ = traj_gen.get_reference_at_index(0)
     x = np.array([x_ref_init[0], x_ref_init[1], x_ref_init[2]])
@@ -263,22 +313,37 @@ def run_single_config(mode: str,
         
         states[k] = x
         
-        # Reference
-        x_ref, x_ref_dot = traj_gen.get_reference_at_index(k)
+        if checkpoint_manager is not None:
+            current_time = k * dt
+            num_obs = len(controller_obstacles)
+            checkpoint_manager.update(x[:2], current_time, num_obs)
+        
+        # Reference — use state-anchored local segment in checkpoint mode
+        if checkpoint_manager is not None:
+            _xr, _ur = traj_gen.get_local_trajectory_segment(x_measured, 1)
+            x_ref = _xr[0]
+            x_ref_dot = _ur[0] if _ur.shape[0] > 0 else traj_gen.get_reference_at_index(k)[1]
+        else:
+            x_ref, x_ref_dot = traj_gen.get_reference_at_index(k)
         error = robot.compute_tracking_error(x_measured, x_ref)
         errors[k] = np.linalg.norm(error[:2])
         
         if k >= N - 1:
             break
         
+        # -- Helper: get trajectory segment (state-anchored when checkpoint mode) --
+        def _get_segment(horizon):
+            if checkpoint_manager is not None:
+                return traj_gen.get_local_trajectory_segment(x_measured, horizon)
+            return traj_gen.get_trajectory_segment(k, horizon)
+
         # -- Compute controls based on mode --
         if mode == 'lqr':
             u = lqr.compute_control(x_measured, x_ref, x_ref_dot)
         
         elif mode == 'mpc':
-            x_refs, u_refs = traj_gen.get_trajectory_segment(k, mpc.N + 1)
+            x_refs, u_refs = _get_segment(mpc.N + 1)
             
-            # Use linearizer to get A_d, B_d
             v_ref = u_refs[0, 0] if abs(u_refs[0, 0]) > 0.01 else 0.1
             A_d, B_d = linearizer.get_discrete_model_explicit(v_ref, x_refs[0, 2])
             
@@ -289,12 +354,10 @@ def run_single_config(mode: str,
                 infeasible_count += 1
         
         elif mode == 'hard_switch':
-            # Risk-based hard switching (baseline comparison)
             assessment = risk_metrics.assess_risk(x_measured, risk_obstacles)
             
             if assessment.combined_risk > 0.3:
-                # MPC mode
-                x_refs, u_refs = traj_gen.get_trajectory_segment(k, mpc.N + 1)
+                x_refs, u_refs = _get_segment(mpc.N + 1)
                 
                 v_ref = u_refs[0, 0] if abs(u_refs[0, 0]) > 0.01 else 0.1
                 A_d, B_d = linearizer.get_discrete_model_explicit(v_ref, x_refs[0, 2])
@@ -308,13 +371,11 @@ def run_single_config(mode: str,
                 u = lqr.compute_control(x_measured, x_ref, x_ref_dot)
         
         elif mode == 'hybrid':
-            # Smooth blending (our contribution)
             u_lqr = lqr.compute_control(x_measured, x_ref, x_ref_dot)
             assessment = risk_metrics.assess_risk(x_measured, risk_obstacles)
             
-            # MPC at reduced rate
             if k % mpc_rate == 0 or mpc_solution is None:
-                x_refs, u_refs = traj_gen.get_trajectory_segment(k, mpc.N + 1)
+                x_refs, u_refs = _get_segment(mpc.N + 1)
                 
                 v_ref = u_refs[0, 0] if abs(u_refs[0, 0]) > 0.01 else 0.1
                 A_d, B_d = linearizer.get_discrete_model_explicit(v_ref, x_refs[0, 2])
@@ -340,7 +401,7 @@ def run_single_config(mode: str,
             blend_weights[k] = blend_info.weight
 
         elif mode == 'adaptive':
-            x_refs, u_refs = traj_gen.get_trajectory_segment(k, adaptive_mpc.N_ext + 1)
+            x_refs, u_refs = _get_segment(adaptive_mpc.N_ext + 1)
 
             if k % mpc_rate == 0 or adaptive_solution is None:
                 adaptive_solution = adaptive_mpc.solve_tracking(
@@ -363,7 +424,7 @@ def run_single_config(mode: str,
             assessment = risk_metrics.assess_risk(x_measured, risk_obstacles)
 
             if k % mpc_rate == 0 or adaptive_solution is None:
-                x_refs, u_refs = traj_gen.get_trajectory_segment(k, adaptive_mpc.N_ext + 1)
+                x_refs, u_refs = _get_segment(adaptive_mpc.N_ext + 1)
                 adaptive_solution = adaptive_mpc.solve_tracking(
                     x_measured,
                     x_refs,
@@ -431,6 +492,21 @@ def run_single_config(mode: str,
         bw_std = stats.get('weight_std', 0.0)
         n_transitions = stats.get('total_switches', 0)
     
+    # Task 11.3: Collect checkpoint metrics
+    checkpoint_completion_rate = 0.0
+    mean_time_to_checkpoint = 0.0
+    mean_checkpoint_overshoot = 0.0
+    checkpoints_reached = 0
+    checkpoints_missed = 0
+    
+    if checkpoint_manager is not None:
+        checkpoint_metrics = checkpoint_manager.get_metrics()
+        checkpoint_completion_rate = checkpoint_metrics.get('completion_rate', 0.0)
+        mean_time_to_checkpoint = checkpoint_metrics.get('mean_time_to_checkpoint', 0.0)
+        mean_checkpoint_overshoot = checkpoint_metrics.get('mean_overshoot', 0.0)
+        checkpoints_reached = checkpoint_metrics.get('checkpoints_reached', 0)
+        checkpoints_missed = checkpoint_metrics.get('checkpoints_missed', 0)
+    
     return RunMetrics(
         mode=mode,
         config_id=config_id,
@@ -446,40 +522,39 @@ def run_single_config(mode: str,
         angular_jerk_peak=jerk_metrics.get('angular_jerk_peak', 0.0),
         infeasible_count=infeasible_count,
         collision_count=collision_count,
-        completion_fraction=1.0,  # All configs run full duration
+        completion_fraction=1.0,
         total_control_effort=total_effort,
         blend_weight_mean=bw_mean,
         blend_weight_std=bw_std,
         smooth_transitions=n_transitions,
-        wall_time_s=wall_time
+        wall_time_s=wall_time,
+        checkpoint_completion_rate=checkpoint_completion_rate,
+        mean_time_to_checkpoint=mean_time_to_checkpoint,
+        mean_checkpoint_overshoot=mean_checkpoint_overshoot,
+        checkpoints_reached=checkpoints_reached,
+        checkpoints_missed=checkpoints_missed,
+        tracking_mode='checkpoint' if checkpoint_mode else 'continuous',
     )
 
 
 # -- Aggregation -----------------------------------------------------
 
 def aggregate_results(runs: List[RunMetrics], mode: str) -> AggregatedResults:
-    """
-    Compute mean ± std and percentiles for all metrics across runs.
-    
-    Args:
-        runs: List of RunMetrics for a single mode
-        mode: Controller mode name
-        
-    Returns:
-        AggregatedResults with per-metric statistics
-    """
+    """Compute mean, spread, and percentiles for all metrics across runs."""
     metric_names = [
         'mean_tracking_error', 'max_tracking_error', 'final_tracking_error',
         'mean_solve_time_ms', 'max_solve_time_ms',
-        'linear_jerk_rms', 'angular_jerk_rms', 
+        'linear_jerk_rms', 'angular_jerk_rms',
         'linear_jerk_peak', 'angular_jerk_peak',
         'infeasible_count', 'collision_count',
-        'total_control_effort', 'wall_time_s'
+        'total_control_effort', 'wall_time_s',
+        'checkpoint_completion_rate', 'mean_time_to_checkpoint',
+        'mean_checkpoint_overshoot', 'checkpoints_reached', 'checkpoints_missed',
     ]
-    
+
     if mode in BLENDED_MODES:
         metric_names += ['blend_weight_mean', 'blend_weight_std', 'smooth_transitions']
-    
+
     metrics = {}
     for name in metric_names:
         values = np.array([getattr(r, name) for r in runs])
@@ -491,7 +566,7 @@ def aggregate_results(runs: List[RunMetrics], mode: str) -> AggregatedResults:
             'p5': float(np.percentile(values, 5)),
             'p95': float(np.percentile(values, 95)),
         }
-    
+
     return AggregatedResults(mode=mode, n_runs=len(runs), metrics=metrics)
 
 
@@ -514,6 +589,12 @@ def format_comparison_table(results: Dict[str, AggregatedResults]) -> str:
         ('infeasible_count', 'Infeasible', '.1f'),
         ('collision_count', 'Collisions', '.1f'),
         ('total_control_effort', 'Ctrl Effort', '.1f'),
+        # Task 11.4: Add checkpoint metrics to comparison table
+        ('checkpoint_completion_rate', 'CP Completion %', '.1f'),
+        ('mean_time_to_checkpoint', 'Mean CP Time (s)', '.3f'),
+        ('mean_checkpoint_overshoot', 'Mean CP Overshoot (m)', '.4f'),
+        ('checkpoints_reached', 'CPs Reached', '.1f'),
+        ('checkpoints_missed', 'CPs Missed', '.1f'),
     ]
     
     modes = list(results.keys())
@@ -560,6 +641,9 @@ def run_statistical_validation(
     modes: List[str] = None,
     duration: float = 20.0,
     dt: float = 0.02,
+    trajectory_type: str = 'figure8',
+    checkpoint_mode: bool = False,
+    dual_mode: bool = False,
     noise_std: float = 0.0,
     heading_noise_std: float = 0.0,
     delay_steps: int = 0,
@@ -568,7 +652,8 @@ def run_statistical_validation(
     scenario_type: str = 'random',
     base_seed: int = 42,
     verbose: bool = True,
-    output_dir: str = 'evaluation/results'
+    output_dir: str = 'evaluation/results',
+    tuning: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, AggregatedResults]:
     """
     Run full Monte Carlo validation across all controller modes.
@@ -578,13 +663,19 @@ def run_statistical_validation(
         modes: List of controller modes to compare
         duration: Simulation duration per run
         dt: Time step
+        trajectory_type: Trajectory type for reference path
+        checkpoint_mode: Run in checkpoint-based tracking mode
+        dual_mode: Run every mode twice (continuous + checkpoint) for comparison
         noise_std: Position noise standard deviation (meters)
         heading_noise_std: Heading noise std (radians)
         delay_steps: Control pipeline delay (timesteps)
+        tau: Actuator time constant (seconds)
+        actuator_noise: Actuator execution noise std
         base_seed: Base random seed
-        scenario_type: Type of obstacle scenario (random, corridor, bugtrap, dense)
+        scenario_type: Type of obstacle scenario
         verbose: Print progress
         output_dir: Directory for output files
+        tuning: Optional dict of tuning overrides
         
     Returns:
         Dictionary mapping mode -> AggregatedResults
@@ -603,42 +694,63 @@ def run_statistical_validation(
         actuator_noise_std=actuator_noise
     )
     
-    # Generate obstacle configs (shared across all modes)
+    predefined_scenarios = ['baseline_static', 'urban_dynamic', 'stochastic_navigation',
+                           'oscillatory_tracking', 'vehicle_realistic']
+    
+    if scenario_type in predefined_scenarios:
+        if verbose:
+            print(f"Warning: Predefined scenario '{scenario_type}' not yet fully supported.")
+            print(f"Falling back to 'random' obstacle generator.")
+        scenario_type = 'random'
+    
     if verbose:
         print(f"Generating {n_configs} obstacle configurations (type={scenario_type}, seed={base_seed})...")
     
     generator = get_generator(scenario_type)
-        
     configs = generator.generate(n_configs, base_seed)
-    
-    # Run all modes
-    all_results: Dict[str, List[RunMetrics]] = {mode: [] for mode in modes}
-    total_runs = n_configs * len(modes)
+
+    # Build the list of (result_key, checkpoint_flag) pairs to run.
+    # In dual mode every controller runs twice: continuous then checkpoint.
+    tracking_passes: List[Tuple[str, bool]] = []
+    if dual_mode:
+        for mode in modes:
+            tracking_passes.append((f'{mode}_continuous', False))
+            tracking_passes.append((f'{mode}_checkpoint', True))
+    else:
+        for mode in modes:
+            tracking_passes.append((mode, checkpoint_mode))
+
+    all_results: Dict[str, List[RunMetrics]] = {key: [] for key, _ in tracking_passes}
+    total_runs = n_configs * len(tracking_passes)
     completed = 0
     
-    for mode in modes:
+    for result_key, cp_flag in tracking_passes:
+        ctrl_mode = result_key.rsplit('_continuous', 1)[0].rsplit('_checkpoint', 1)[0] if dual_mode else result_key
+        label = f"{ctrl_mode.upper()} ({'checkpoint' if cp_flag else 'continuous'})"
         if verbose:
             print(f"\n{'-'*50}")
-            print(f"Running mode: {mode.upper()} ({n_configs} configs)")
+            print(f"Running: {label} ({n_configs} configs)")
             print(f"{'-'*50}")
         
         for i, config in enumerate(configs):
             try:
                 metrics = run_single_config(
-                    mode=mode,
+                    mode=ctrl_mode,
                     obstacle_config=config,
                     noise_config=noise_config,
                     duration=duration,
                     dt=dt,
-                    config_id=i
+                    config_id=i,
+                    trajectory_type=trajectory_type,
+                    checkpoint_mode=cp_flag,
+                    tuning=tuning,
                 )
-                all_results[mode].append(metrics)
+                all_results[result_key].append(metrics)
             except Exception as e:
                 if verbose:
                     print(f"  Config {i} FAILED: {e}")
-                # Create a failure entry
-                all_results[mode].append(RunMetrics(
-                    mode=mode, config_id=i, seed=config.seed,
+                all_results[result_key].append(RunMetrics(
+                    mode=ctrl_mode, config_id=i, seed=config.seed,
                     mean_tracking_error=float('inf'),
                     max_tracking_error=float('inf'),
                     final_tracking_error=float('inf'),
@@ -646,7 +758,8 @@ def run_statistical_validation(
                     linear_jerk_rms=0.0, angular_jerk_rms=0.0,
                     linear_jerk_peak=0.0, angular_jerk_peak=0.0,
                     infeasible_count=999, collision_count=999,
-                    completion_fraction=0.0, total_control_effort=0.0
+                    completion_fraction=0.0, total_control_effort=0.0,
+                    tracking_mode='checkpoint' if cp_flag else 'continuous',
                 ))
             
             completed += 1
@@ -656,23 +769,21 @@ def run_statistical_validation(
     
     # Aggregate results
     aggregated = {}
-    for mode in modes:
-        # Filter out failed runs
-        valid_runs = [r for r in all_results[mode] 
+    for result_key, _ in tracking_passes:
+        valid_runs = [r for r in all_results[result_key] 
                       if r.mean_tracking_error < float('inf')]
         if valid_runs:
-            aggregated[mode] = aggregate_results(valid_runs, mode)
+            aggregated[result_key] = aggregate_results(valid_runs, result_key)
         else:
-            print(f"WARNING: No valid runs for mode '{mode}'")
+            if verbose:
+                print(f"WARNING: No valid runs for '{result_key}'")
     
-    # Print table
     if verbose:
         print(format_comparison_table(aggregated))
     
     # Save results
     os.makedirs(output_dir, exist_ok=True)
     
-    # Save JSON
     json_data = {
         'metadata': {
             'n_configs': n_configs,
@@ -680,12 +791,13 @@ def run_statistical_validation(
             'dt': dt,
             'noise_config': asdict(noise_config),
             'base_seed': base_seed,
+            'dual_mode': dual_mode,
             'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
         },
         'results': {}
     }
-    for mode, agg in aggregated.items():
-        json_data['results'][mode] = {
+    for key, agg in aggregated.items():
+        json_data['results'][key] = {
             'n_runs': agg.n_runs,
             'metrics': agg.metrics
         }
@@ -696,18 +808,16 @@ def run_statistical_validation(
     if verbose:
         print(f"Results saved to {json_path}")
     
-    # Save CSV
     csv_path = os.path.join(output_dir, 'statistical_results.csv')
     with open(csv_path, 'w') as f:
-        # Header: mode, n_runs, then for each metric: mean, std
         metric_keys = list(next(iter(aggregated.values())).metrics.keys())
         header_parts = ['mode', 'n_runs']
         for mk in metric_keys:
             header_parts.extend([f'{mk}_mean', f'{mk}_std'])
         f.write(','.join(header_parts) + '\n')
         
-        for mode, agg in aggregated.items():
-            row_parts = [mode, str(agg.n_runs)]
+        for key, agg in aggregated.items():
+            row_parts = [key, str(agg.n_runs)]
             for mk in metric_keys:
                 if mk in agg.metrics:
                     row_parts.extend([
@@ -720,23 +830,24 @@ def run_statistical_validation(
     if verbose:
         print(f"CSV saved to {csv_path}")
     
-    # Save per-run CSV for detailed analysis
     perrun_path = os.path.join(output_dir, 'per_run_results.csv')
     with open(perrun_path, 'w') as f:
         fields = [
-            'mode', 'config_id', 'seed',
+            'mode', 'tracking_mode', 'config_id', 'seed',
             'mean_tracking_error', 'max_tracking_error', 'final_tracking_error',
             'mean_solve_time_ms', 'max_solve_time_ms',
             'linear_jerk_rms', 'angular_jerk_rms',
             'linear_jerk_peak', 'angular_jerk_peak',
             'infeasible_count', 'collision_count',
             'total_control_effort', 'blend_weight_mean', 'smooth_transitions',
+            'checkpoint_completion_rate', 'mean_time_to_checkpoint',
+            'mean_checkpoint_overshoot', 'checkpoints_reached', 'checkpoints_missed',
             'wall_time_s'
         ]
         f.write(','.join(fields) + '\n')
         
-        for mode in modes:
-            for r in all_results[mode]:
+        for result_key, _ in tracking_passes:
+            for r in all_results[result_key]:
                 if r.mean_tracking_error < float('inf'):
                     values = [str(getattr(r, field)) for field in fields]
                     f.write(','.join(values) + '\n')
@@ -761,6 +872,12 @@ def main():
                         help='Controller modes to compare')
     parser.add_argument('--duration', type=float, default=20.0,
                         help='Simulation duration (seconds)')
+    parser.add_argument('--trajectory', type=str, default='figure8',
+                        help='Reference trajectory type')
+    parser.add_argument('--checkpoint-mode', action='store_true',
+                        help='Enable checkpoint-based reference tracking')
+    parser.add_argument('--dual-mode', action='store_true',
+                        help='Run each mode twice (continuous + checkpoint) for comparison')
     parser.add_argument('--noise', type=float, default=0.0,
                         help='Position noise std (meters)')
     parser.add_argument('--heading-noise', type=float, default=0.0,
@@ -772,8 +889,10 @@ def main():
     parser.add_argument('--actuator-noise', type=float, default=0.0,
                         help='Actuator execution noise std')
     parser.add_argument('--scenario', type=str, default='random',
-                        choices=['random', 'corridor', 'bugtrap', 'dense', 'moving', 'random_walk'],
-                        help='Scenario type')
+                        choices=['random', 'corridor', 'bugtrap', 'dense', 'moving', 'random_walk',
+                                 'baseline_static', 'urban_dynamic', 'stochastic_navigation',
+                                 'oscillatory_tracking', 'vehicle_realistic'],
+                        help='Scenario type (random/corridor/bugtrap/dense/moving/random_walk for obstacle configs, or predefined scenarios)')
     parser.add_argument('--seed', type=int, default=42,
                         help='Base random seed')
     parser.add_argument('--output', type=str, default='evaluation/results',
@@ -787,6 +906,9 @@ def main():
         n_configs=args.configs,
         modes=args.modes,
         duration=args.duration,
+        trajectory_type=args.trajectory,
+        checkpoint_mode=args.checkpoint_mode,
+        dual_mode=args.dual_mode,
         noise_std=args.noise,
         heading_noise_std=args.heading_noise,
         delay_steps=args.delay,

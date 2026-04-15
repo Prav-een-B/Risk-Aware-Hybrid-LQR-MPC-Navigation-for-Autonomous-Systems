@@ -180,8 +180,12 @@ def test_property_32_clothoid_formula(kappa0, k_rate, t, nominal_speed):
     if n_steps > 0:
         s_vals = np.linspace(0, s, n_steps)
         theta_vals = kappa0 * s_vals + 0.5 * k_rate * s_vals**2
-        x_expected = np.trapz(np.cos(theta_vals), s_vals)
-        y_expected = np.trapz(np.sin(theta_vals), s_vals)
+        if hasattr(np, "trapezoid"):
+            x_expected = np.trapezoid(np.cos(theta_vals), s_vals)
+            y_expected = np.trapezoid(np.sin(theta_vals), s_vals)
+        else:
+            x_expected = np.trapz(np.cos(theta_vals), s_vals)
+            y_expected = np.trapz(np.sin(theta_vals), s_vals)
     else:
         x_expected, y_expected = 0.0, 0.0
     

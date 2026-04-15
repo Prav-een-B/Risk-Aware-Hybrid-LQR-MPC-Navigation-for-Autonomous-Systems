@@ -1,6 +1,6 @@
 # Work Progress
 
-Updated: 2026-04-06
+Updated: 2026-04-12
 
 ## 1. Current Repository State
 
@@ -29,13 +29,34 @@ integration work is now wired into the runnable workflow.
 | Area | Status | Notes |
 |---|---|---|
 | Adaptive MPC in evaluation runner | Partial | Standalone modes are wired; `evaluation/statistical_runner.py` still needs adaptive/hybrid-adaptive experiment wiring |
-| Checkpoint-based reference tracking | Partial | `reference_generator.py` and `run_simulation.py` now support checkpoint-path presets, but the reference flow is still precomputed rather than fully local and queue-driven |
+| Checkpoint-based reference tracking | Implemented | Curvature-aware checkpoint generation, adaptive switching (`CheckpointManager`), and local horizon extraction are integrated in standalone and evaluation workflows |
 | Uncertainty-aware risk model | Partial | Obstacle inflation is now wired, but risk remains primarily geometric and not yet covariance-driven end-to-end |
 | Complex trajectory suite | Partial | Figure-8, circle, clover, slalom, and checkpoint presets now exist in the standalone path, but the evaluation runner still defaults to the older benchmark setup |
 | Docker validation workflow | Implemented | `Dockerfile`, validation scripts, artifact collection, and pytest smoke tests are now present |
 | ROS2 hybrid Gazebo harness | Partial | `hybrid_node.py`, `kinematic_sim_node.py`, and `hybrid_gazebo.launch.py` now exist, but odometry still comes from the lightweight ROS simulator rather than a Gazebo robot plugin |
 
-## 2. Evidence From Existing Evaluation
+## 2. Checkpoint-Based Tracking Timeline and Key Decisions
+
+### Implementation timeline
+
+| Milestone | Status | Summary |
+|---|---|---|
+| Trajectory family expansion | Completed | Added seven extended trajectories: lissajous, spiral, spline_path, urban_path, sinusoidal, random_waypoint, clothoid |
+| Curvature and checkpoint generation | Completed | Added finite-difference curvature computation and adaptive checkpoint spacing |
+| Adaptive checkpoint switching | Completed | Added curvature-scaled switching radius, hysteresis logic, and forward-progress timeout |
+| Controller integration | Completed | Unified checkpoint-mode reference extraction across LQR, MPC, Adaptive MPC, Hybrid, Hybrid-Adaptive |
+| Scenario and metrics integration | Completed | Added five checkpoint-aware scenarios and checkpoint completion/time/overshoot reporting |
+| Property and integration validation | Completed | Added properties for formulas, spacing, switching, horizon extraction, dynamics, uncertainty, and metrics |
+
+### Key design decisions
+
+1. Keep backward compatibility by preserving legacy trajectories while adding checkpoint-mode support behind explicit CLI flags.
+2. Use curvature as the primary geometric signal for checkpoint spacing and switching radius adaptation.
+3. Use hysteresis plus forward-progress timeout to avoid oscillatory switching and deadlock near difficult checkpoints.
+4. Keep obstacle representations separated by purpose (`controller_obstacles`, `risk_obstacles`, `actual_obstacles`) to avoid mixing safety inflation with collision truth.
+5. Keep uncertainty injection modular (process noise, sensor noise, mismatch, delay) so stress tests can be composed per scenario.
+
+## 4. Evidence From Existing Evaluation
 
 The repository already contains a stored statistical evaluation at
 `evaluation/results/statistical_results.json`.
@@ -53,7 +74,7 @@ This means the current hybrid architecture is implemented, but the next phase
 must focus on controller design quality and benchmarking discipline, not just
 on adding more modules.
 
-## 3. Validation Status of This Documentation Pass
+## 5. Validation Status of This Documentation Pass
 
 This pass included feature integration and smoke validation of dynamic obstacle
 and adaptive execution paths.
@@ -80,7 +101,7 @@ Implication:
 - The repository state described here now includes both stored evidence and a
   fresh smoke validation of the new trajectory features.
 
-## 4. Literature-Driven Gap Analysis
+## 6. Literature-Driven Gap Analysis
 
 ### What the literature already supports well
 
@@ -99,8 +120,9 @@ Implication:
 
 1. The adaptive MPC branch is integrated in standalone execution, but not yet
    in the statistical evaluation runner.
-2. The reference interface is still trajectory-sample-based rather than
-   checkpoint-based.
+2. Checkpoint-mode is implemented, but broader evaluation defaults still need
+  to exercise checkpoint-specific metrics across all controller/situation
+  combinations.
 3. Risk and safety logic do not yet use full obstacle-motion uncertainty
    propagation and covariance-based sensing models.
 4. Evaluation and ROS paths do not yet expose the same adaptive-mode breadth as
@@ -122,9 +144,9 @@ That contribution is stronger because it compares:
 - and eventually a hybrid controller that uses adaptive MPC in the high-risk
   branch
 
-## 5. GO / NO-GO Decisions
+## 7. GO / NO-GO Decisions
 
-### 5.1 Integrate Adaptive MPC as a Comparative Controller
+### 7.1 Integrate Adaptive MPC as a Comparative Controller
 
 Research support:
 
@@ -146,7 +168,7 @@ Primary files:
 - `run_simulation.py`
 - `evaluation/statistical_runner.py`
 
-### 5.2 Move to Checkpoint-Based References
+### 7.2 Sustain and Benchmark Checkpoint-Based References
 
 Research support:
 
@@ -170,7 +192,7 @@ Primary files:
 - `src/hybrid_controller/hybrid_controller/trajectory/reference_generator.py`
 - `run_simulation.py`
 
-### 5.3 Add Moving Obstacles in a Bounded Environment
+### 7.3 Add Moving Obstacles in a Bounded Environment
 
 Research support:
 
@@ -192,7 +214,7 @@ Primary files:
 - `src/hybrid_controller/hybrid_controller/controllers/risk_metrics.py`
 - `src/hybrid_controller/hybrid_controller/controllers/mpc_controller.py`
 
-### 5.4 Add Random-Walk Obstacles With Safety and Sensing Factors
+### 7.4 Add Random-Walk Obstacles With Safety and Sensing Factors
 
 Research support:
 
@@ -215,7 +237,7 @@ Primary files:
 - `src/hybrid_controller/hybrid_controller/controllers/risk_metrics.py`
 - `src/hybrid_controller/hybrid_controller/controllers/mpc_controller.py`
 
-## 6. Recommended Mathematical Upgrade for Safety Margins
+## 8. Recommended Mathematical Upgrade for Safety Margins
 
 For moving obstacles, use a predicted obstacle envelope instead of a fixed
 radius:
@@ -237,7 +259,7 @@ then the covariance grows over time, and `d_sensor(k)` should grow with the
 prediction horizon. This gives a principled way to build the additional safety
 and sensing factor requested for the next implementation phase.
 
-## 7. Proposed Next Implementation Order
+## 9. Proposed Next Implementation Order
 
 ### Step 1
 
@@ -274,7 +296,7 @@ Run the full comparative study:
 4. Adaptive MPC
 5. Hybrid LQR-Adaptive-MPC
 
-## 8. Immediate Engineering Targets
+## 10. Immediate Engineering Targets
 
 | Target | Why First | Expected Outcome |
 |---|---|---|
@@ -284,7 +306,7 @@ Run the full comparative study:
 | Uncertainty-aware safety inflation | Answers the sensing-factor requirement directly | Stronger, more defensible applicative safety story |
 | Full robot-in-Gazebo coupling | Replaces the current lightweight odometry shim | The ROS2 path becomes a truer plant-in-the-loop benchmark |
 
-## 9. Documentation Map
+## 11. Documentation Map
 
 For the current phase, the most relevant documents are:
 
