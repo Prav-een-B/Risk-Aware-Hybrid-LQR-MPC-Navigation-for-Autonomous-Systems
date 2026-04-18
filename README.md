@@ -1,6 +1,6 @@
 # Risk-Aware Hybrid LQR-MPC Navigation for Autonomous Systems
 
-A ROS2-based implementation of hybrid control combining Linear Quadratic Regulator (LQR) for trajectory tracking with Model Predictive Control (MPC) for obstacle avoidance.
+A ROS2-based implementation of a sophisticated hybrid control system bridging the computational efficiency of a Linear Quadratic Regulator (LQR) with the structurally secure constraints of Stochastic Model Predictive Control (SMPC).
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
 ![ROS2](https://img.shields.io/badge/ROS2-Humble-green)
@@ -11,6 +11,7 @@ A ROS2-based implementation of hybrid control combining Linear Quadratic Regulat
 ## Table of Contents
 
 - [Overview](#overview)
+- [Architecture Diagram](#architecture-diagram)
 - [Project Structure](#project-structure)
 - [Quick Start (Standalone)](#quick-start-standalone)
 - [Full Setup Guide](#full-setup-guide)
@@ -29,26 +30,61 @@ This project implements a **smooth supervisory hybrid control system** for auton
 
 | Component | Controller | Purpose |
 |-----------|------------|---------|
-| **Trajectory Tracking** | LQR | Low-risk, efficient tracking (DARE-based) |
-| **Obstacle Avoidance** | MPC | High-risk, constraint-aware (CVXPY/OSQP) |
+| **Trajectory Tracking** | LQR | Low-risk, high-speed tracking |
+| **Obstacle Avoidance** | SMPC | High-risk, constraint-aware Stochastic MPC |
 | **Blending Supervisor** | Sigmoid | Continuous arbitration: `u = w·u_mpc + (1-w)·u_lqr` |
-| **Adaptive MPC** | CasADi/IPOPT | Online parameter estimation + nonlinear MPC |
+| **Adaptive LQR/MPC** | CasADi/IPOPT | Online parameter estimation + nonlinear MPC |
 
 **Key Features:**
-- Differential drive robot model with unicycle kinematics
-- DARE-based LQR with automatic gain computation
-- CVXPY-based MPC with linearized obstacle constraints, Tube MPC, and Δu penalty
-- **Smooth blending** with anti-chatter guarantees (rate-limited sigmoid + hysteresis)
-- **Jerk-aware** control: peak/RMS/p95 jerk metrics logged automatically
-- **Adaptive MPC** with LMS parameter estimation and CasADi/IPOPT NLP
-- Dynamic obstacle fields (`moving`, `random_walk`) with per-step updates
-- Safety/sensing-aware obstacle inflation via `InflationConfig`
-- Hybrid LQR + Adaptive MPC runtime mode (`--mode hybrid_adaptive`)
-- Risk-based supervisory control with feasibility fallback
-- Multiple trajectory families including seven extended types: lissajous, spiral, spline_path, urban_path, sinusoidal, random_waypoint, clothoid
-- Comprehensive logging (JSON/CSV export)
-- Standalone simulation (no ROS2 required) + full ROS2 integration
-- Docker validation suite and ROS2/Gazebo harness
+- **Covariance-Driven Mahalanobis Formulation**: Replaces basic Euclidean logic with overlapping Gaussian collision probability constraints, enabling exact control over the margin scalar ($\Sigma_x + \Sigma_{obs}$).
+- **Stochastic Model Predictive Control (SMPC)**: Activates exclusively when probabilistic risk thresholds are breached, ensuring collision-free paths via Inverse-CDF margins ($\Pr(\text{collision}) \le \epsilon$).
+- **Adaptive LQR Tracking**: Auto-tunes unmodeled dynamics (actuator mismatches, inertia) via active learning to maximize the percentage of time spent in LQR execution without tracking degradation.
+- **Checkpoints**: Automatically degrades continuous tracking to intermittent coordinate goals when encountering hyper-dense constraints, mathematically guaranteeing MPC stability.
+- **Smooth blending** with anti-chatter guarantees (rate-limited sigmoid + hysteresis).
+- Standalone simulation (no ROS2 required) + full ROS2 integration + comprehensive Monte Carlo testing framework.
+
+---
+
+## Architecture Diagram
+
+```mermaid
+graph TD
+    classDef tracking fill:#e3f2fd,stroke:#3b82f6,stroke-width:2px;
+    classDef avoidance fill:#fff3e0,stroke:#f59e0b,stroke-width:2px;
+    classDef supervisor fill:#f3e8ff,stroke:#8b5cf6,stroke-width:2px;
+    classDef sensor fill:#f0fdf4,stroke:#10b981,stroke-width:2px;
+
+    subgraph Perception
+        A(State Estimator<br>Covariance Σ_x):::sensor
+        B(Obstacle Tracker<br>Covariance Σ_obs):::sensor
+    end
+
+    subgraph Risk Supervisor
+        C{Risk Engine<br> Mahalanobis Distance}:::supervisor
+        C -->|Dist > Margin| D(Low Risk:<br>Target LQR)
+        C -->|Dist < Margin| E(High Risk:<br>Target SMPC)
+    end
+
+    subgraph Controllers
+        F[LQR / Adaptive LQR<br>Fast & Efficient]:::tracking
+        G[Stochastic MPC<br>Chance Constraints]:::avoidance
+    end
+
+    subgraph Blending
+        H(Sigmoid Blender<br>with Hysteresis):::supervisor
+    end
+
+    A --> C
+    B --> C
+    D -.-> F
+    E -.-> G
+    A --> F
+    A --> G
+    F --> H
+    G --> H
+
+    H --> I((Robot Actuators))
+```
 
 ---
 
