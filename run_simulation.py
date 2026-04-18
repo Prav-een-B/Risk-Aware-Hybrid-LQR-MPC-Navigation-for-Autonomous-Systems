@@ -210,7 +210,8 @@ def run_lqr_simulation(duration: float = 20.0, dt: float = 0.02,
         # Update checkpoint manager if in checkpoint mode
         if traj_gen.checkpoint_mode:
             t = k * dt
-            traj_gen.update_checkpoint_manager(x[:2], t)
+            num_obs = len(obstacle_field.get_controller_obstacles(x[:2], 5.0)) if obstacle_field else 0
+            traj_gen.update_checkpoint_manager(x[:2], t, num_obs)
         
         # Get reference
         x_ref, u_ref = get_reference_point(
@@ -374,7 +375,8 @@ def run_mpc_simulation(duration: float = 20.0, dt: float = 0.02,
         # Update checkpoint manager if in checkpoint mode
         if traj_gen.checkpoint_mode:
             t = k * dt
-            traj_gen.update_checkpoint_manager(x[:2], t)
+            num_obs = len(obstacle_field_mpc.get_controller_obstacles(x[:2], 5.0)) if obstacle_field_mpc else 0
+            traj_gen.update_checkpoint_manager(x[:2], t, num_obs)
         
         # Get reference segment
         x_refs, u_refs = get_reference_segment(
@@ -695,7 +697,8 @@ def run_hybrid_simulation(duration: float = 20.0, dt: float = 0.02,
         # Update checkpoint manager if in checkpoint mode
         if traj_gen.checkpoint_mode:
             t = k * dt
-            traj_gen.update_checkpoint_manager(x[:2], t)
+            num_obs = len(obstacle_field.get_controller_obstacles(x[:2], 5.0)) if obstacle_field else 0
+            traj_gen.update_checkpoint_manager(x[:2], t, num_obs)
         
         # 1. Measurement (add sensor noise if actuator params provided)
         x_measured = x.copy()
@@ -1002,7 +1005,8 @@ def run_adaptive_simulation(duration: float = 20.0, dt: float = 0.02,
         # Update checkpoint manager if in checkpoint mode
         if traj_gen.checkpoint_mode:
             t = k * dt
-            traj_gen.update_checkpoint_manager(x[:2], t)
+            num_obs = len(obstacle_field.get_controller_obstacles(x[:2], 5.0)) if obstacle_field else 0
+            traj_gen.update_checkpoint_manager(x[:2], t, num_obs)
         
         x_refs, u_refs = get_reference_segment(
             traj_gen,
@@ -1257,7 +1261,8 @@ def run_hybrid_adaptive_simulation(duration: float = 20.0, dt: float = 0.02,
         # Update checkpoint manager if in checkpoint mode
         if traj_gen.checkpoint_mode:
             t = k * dt
-            traj_gen.update_checkpoint_manager(x[:2], t)
+            num_obs = len(obstacle_field.get_controller_obstacles(x[:2], 5.0)) if obstacle_field else 0
+            traj_gen.update_checkpoint_manager(x[:2], t, num_obs)
         
         x_measured = x.copy()
         if actuator_params and actuator_params.noise_v_std > 0:

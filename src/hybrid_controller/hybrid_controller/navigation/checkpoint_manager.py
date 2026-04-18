@@ -134,6 +134,9 @@ class CheckpointManager:
         # Update minimum distance achieved
         current_cp.min_distance = min(current_cp.min_distance, distance)
         
+        # Save active obstacle density for other internal adaptations
+        self.current_num_obstacles = num_obstacles_in_horizon
+        
         # Compute curvature-adapted baseline radius and apply hysteresis after
         # updating the progress direction state.
         base_radius = self._compute_base_radius(current_cp.curvature)
@@ -171,20 +174,25 @@ class CheckpointManager:
     
     def _compute_base_radius(self, curvature: float) -> float:
         """
-        Update switching radius based on curvature.
+        Update switching radius based on curvature and local obstacle density.
         
         Formula:
-            radius = base_radius - curvature_scaling * curvature
+            radius = base_radius - curvature_scaling * curvature - obstacle_adjustment
         
         High curvature -> smaller radius (tighter tracking)
+        High obstacle density -> smaller radius (precise cornering)
         Low curvature -> larger radius (more tolerance)
         
         Args:
             curvature: Local curvature at checkpoint (1/m)
         """
         adjustment = self.curvature_scaling * curvature
+        
+        # Dense obstacles demand tighter tracking to avoid cutting corners
+        obstacle_adj = 0.05 * getattr(self, 'current_num_obstacles', 0)
+        
         return max(
-            self.base_radius - adjustment,
+            self.base_radius - adjustment - obstacle_adj,
             0.1  # Minimum radius
         )
     
@@ -241,6 +249,10 @@ class CheckpointManager:
         current_pos = robot_state.copy()
         target_cp_idx = self.current_idx
         v_max_ref = 1.0
+        
+        # Lower target velocity lookahead locally if many obstacles around
+        if getattr(self, 'current_num_obstacles', 0) > 0:
+            v_max_ref = max(0.4, 1.0 - 0.15 * self.current_num_obstacles)
         
         for i in range(horizon):
             x_refs[i] = current_pos
