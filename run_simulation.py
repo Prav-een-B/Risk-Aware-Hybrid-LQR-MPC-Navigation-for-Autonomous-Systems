@@ -27,6 +27,7 @@ from hybrid_controller.controllers.lqr_controller import LQRController
 from hybrid_controller.controllers.mpc_controller import MPCController, Obstacle
 from hybrid_controller.controllers.risk_metrics import RiskMetrics
 from hybrid_controller.controllers.hybrid_blender import BlendingSupervisor
+from hybrid_controller.controllers.adaptive_hybrid_controller import AdaptiveHybridController
 from hybrid_controller.controllers.yaw_stabilizer import YawStabilizer
 from hybrid_controller.models.actuator_dynamics import ActuatorDynamics, ActuatorParams
 from hybrid_controller.logging.simulation_logger import SimulationLogger
@@ -746,10 +747,340 @@ def run_hybrid_simulation(duration: float = 20.0, dt: float = 0.02,
     }
 
 
+def run_adaptive_hybrid_simulation(duration: float = 20.0, dt: float = 0.02,
+                                   visualize: bool = True,
+                                   scenario: str = "default",
+                                   actuator_params: ActuatorParams = None) -> dict:
+    """
+    Run adaptive hybrid simulation with Adaptive MPC (LMS) + LQR.
+    
+    Uses distance-based risk metrics to switch between:
+    - Adaptive MPC with online parameter learning (near obstacles)
+    - LQR for efficient tracking (far from obstacles)
+    
+    Key Features:
+    - LMS adaptation of velocity/angular velocity scaling factors
+    - Smooth sigmoid blending with anti-chatter
+    - Distance-based risk assessment
+    - Online learning when in high-risk regions
+    
+    Args:
+        duration: Simulation duration (seconds)
+        dt: Time step (seconds)
+        visualize: Generate plots
+        scenario: Obstacle scenario
+        actuator_params: Optional actuator dynamics parameters
+        
+    Returns:
+        Dictionary with simulation results including parameter adaptation history
+    """
+    print("=" * 60)
+    print("Adaptive Hybrid (Adaptive MPC + LQR) Simulation")
+    print("=" * 60)
+    
+    # Initialize components
+    robot = DifferentialDriveRobot(v_max=2.0, omega_max=3.0)
+    traj_gen = ReferenceTrajectoryGenerator(A=2.0, a=0.5, dt=dt, T_blend=0.5)
+    
+    # Initialize Adaptive Hybrid Controller
+    # Initial parameter estimates slightly off to demonstrate adaptation
+    theta_init = np.array([0.85, 0.85])  # True values are [1.0, 1.0]
+    
+    adaptive_hybrid = AdaptiveHybridController(
+        # Adaptive MPC parameters
+        prediction_horizon=10,
+        terminal_horizon=5,
+        mpc_Q_diag=[30.0, 30.0, 5.0],
+        mpc_R_diag=[0.1, 0.1],
+        omega_term=10.0,
+        q_xi=1000.0,
+        d_safe=0.3,
+        enable_adaptation=True,
+        adaptation_gamma=0.005,  # Same as standalone adaptive MPC
+        theta_init=theta_init,
+        # LQR parameters
+        lqr_Q_diag=[15.0, 15.0, 8.0],
+        lqr_R_diag=[0.1, 0.1],
+        # Risk metrics - clear switching based on distance only
+        d_trigger=0.8,  # Start risk at 0.8m from obstacle
+        risk_alpha=1.0,  # Only use distance risk
+        risk_beta=0.0,   # Ignore predictive risk
+        threshold_low=0.2,
+        threshold_medium=0.5,
+        # Blending parameters - binary switching
+        k_sigmoid=20.0,
+        risk_threshold=0.35,  # Switch at risk=0.35: <0.3=LQR, >0.4=MPC
+        dw_max=50.0,  # Instant switching
+        hysteresis_band=0.05,
+        solver_time_limit=50.0,  # Generous timeout
+        feasibility_decay=0.8,
+        # Common
+        v_max=2.0,
+        omega_max=3.0,
+        dt=dt
+    )
+    
+    logger = SimulationLogger(log_dir='logs', log_level='INFO', node_name='adaptive_hybrid_sim')
+    
+    # Initialize actuator dynamics if provided
+    actuator = None
+    if actuator_params:
+        actuator = ActuatorDynamics(actuator_params, dt)
+    
+    # Define obstacles based on scenario
+    if scenario == "sparse":
+        obstacles = [Obstacle(x=1.5, y=0.8, radius=0.2)]
+    elif scenario == "dense":
+        obstacles = [
+            Obstacle(x=1.0, y=0.5, radius=0.2),
+            Obstacle(x=-0.5, y=-1.0, radius=0.25),
+            Obstacle(x=1.5, y=-0.3, radius=0.15),
+            Obstacle(x=-1.5, y=0.5, radius=0.2),
+            Obstacle(x=0.0, y=0.8, radius=0.15),
+        ]
+    elif scenario == "corridor":
+        obstacles = [
+            Obstacle(x=1.0, y=0.3, radius=0.15),
+            Obstacle(x=1.0, y=0.7, radius=0.15),
+            Obstacle(x=-0.8, y=-0.7, radius=0.15),
+            Obstacle(x=-0.3, y=-1.2, radius=0.15),
+        ]
+    else:  # default
+        obstacles = [
+            Obstacle(x=1.0, y=0.5, radius=0.2),
+            Obstacle(x=-0.5, y=-1.0, radius=0.25),
+            Obstacle(x=1.5, y=-0.3, radius=0.15),
+        ]
+    
+    obstacle_dicts = [{'x': o.x, 'y': o.y, 'radius': o.radius} for o in obstacles]
+    print(f"Scenario: {scenario} | Added {len(obstacles)} obstacles")
+    print(f"Initial parameter estimates: v_scale={theta_init[0]:.3f}, omega_scale={theta_init[1]:.3f}")
+    
+    # Generate trajectory
+    trajectory = traj_gen.generate(duration)
+    N = len(trajectory)
+    
+    # Initialize state
+    x_ref_init, _ = traj_gen.get_reference_at_index(0)
+    x = x_ref_init.copy()
+    
+    # Storage
+    states = np.zeros((N, 3))
+    controls = np.zeros((N - 1, 2))
+    errors = np.zeros((N - 1, 3))
+    risk_history = np.zeros((N - 1,))
+    blend_weights = np.zeros((N - 1,))
+    param_history = np.zeros((N - 1, 2))
+    adaptation_active = np.zeros((N - 1,), dtype=bool)
+    
+    states[0] = x
+    
+    # MPC rate control
+    mpc_rate = 5
+    
+    print(f"\nStarting adaptive hybrid simulation ({N} steps)...")
+    print("Legend: w=blend_weight, r=risk, theta=[v_scale, omega_scale], adapt=adaptation_active")
+    
+    for k in range(N - 1):
+        # Get reference
+        x_ref, u_ref = traj_gen.get_reference_at_index(k)
+        x_refs, u_refs = traj_gen.get_trajectory_segment(k, adaptive_hybrid.adaptive_mpc.N_ext + 1)
+        
+        # Compute hybrid control
+        u, info = adaptive_hybrid.compute_control(
+            x=x,
+            x_ref=x_ref,
+            u_ref=u_ref,
+            obstacles=obstacles,
+            x_refs=x_refs,
+            u_refs=u_refs,
+            mpc_rate=mpc_rate
+        )
+        
+        # Store info
+        risk_history[k] = info.risk
+        blend_weights[k] = info.weight
+        param_history[k] = info.param_estimates
+        adaptation_active[k] = info.adaptation_active
+        
+        # Compute error
+        error = x - x_ref
+        error[2] = robot.normalize_angle(error[2])
+        
+        # Log
+        logger.log_state(k, x, x_ref, error)
+        logger.log_control(k, u, f"ADAPTIVE_HYBRID(w={info.weight:.2f})", info.solver_time_ms)
+        logger.log_hybrid_step(k, info.weight, info.risk, info.mode, 0.0, 0.0)
+        
+        # Apply actuator dynamics if enabled
+        u_applied = u.copy()
+        if actuator:
+            u_applied[0], u_applied[1] = actuator.update(u[0], u[1])
+        
+        # Simulate robot
+        x = robot.simulate_step(x, u_applied, dt)
+        
+        # Store
+        states[k + 1] = x
+        controls[k] = u
+        errors[k] = error
+        
+        if k % 100 == 0:
+            error_norm = np.linalg.norm(error[:2])
+            adapt_str = "Y" if info.adaptation_active else "N"
+            print(f"  k={k:4d}: r={info.risk:.2f} w={info.weight:.3f} [{info.mode:22s}] "
+                  f"params=[{info.param_estimates[0]:.3f},{info.param_estimates[1]:.3f}] "
+                  f"adapt={adapt_str} err={error_norm:.4f}")
+    
+    # Results
+    mean_error = np.mean(np.linalg.norm(errors[:, :2], axis=1))
+    final_error = np.linalg.norm(errors[-1, :2])
+    
+    # Get statistics
+    stats = adaptive_hybrid.get_statistics()
+    
+    print(f"\nResults:")
+    print(f"  Mean tracking error: {mean_error:.4f} m")
+    print(f"  Final tracking error: {final_error:.4f} m")
+    print(f"\nAdaptive Hybrid Statistics:")
+    print(f"  Weight mean: {stats['weight_mean']:.3f}")
+    print(f"  LQR-dominant: {100*stats['lqr_dominant_fraction']:.1f}%")
+    print(f"  Blended: {100*stats['blended_fraction']:.1f}%")
+    print(f"  Adaptive MPC-dominant: {100*stats['mpc_dominant_fraction']:.1f}%")
+    print(f"  Weight transitions: {stats['total_switches']}")
+    print(f"  Mean risk: {stats['mean_risk']:.3f}")
+    print(f"  Max risk: {stats['max_risk']:.3f}")
+    print(f"\nParameter Adaptation:")
+    print(f"  Initial estimates: v_scale={theta_init[0]:.3f}, omega_scale={theta_init[1]:.3f}")
+    print(f"  Final estimates: v_scale={stats['param_estimates'][0]:.3f}, omega_scale={stats['param_estimates'][1]:.3f}")
+    print(f"  Adaptation steps: {np.sum(adaptation_active)}/{len(adaptation_active)}")
+    print(f"\nMPC Statistics:")
+    print(f"  Total solves: {stats['mpc_stats']['solve_count']}")
+    print(f"  Avg solve time: {stats['mpc_stats']['avg_solve_time_ms']:.2f} ms")
+    
+    # Check collisions
+    collision_count = 0
+    for state in states:
+        for obs in obstacles:
+            if obs.is_collision(state[0], state[1], 0.3):
+                collision_count += 1
+                break
+    print(f"  Collision events: {collision_count}")
+    
+    logger.finalize()
+    
+    # Visualization
+    if visualize:
+        viz = Visualizer(output_dir='outputs')
+        ref_states = trajectory[:, 1:4]
+        
+        viz.plot_with_obstacles(states, ref_states, obstacle_dicts, 0.3,
+                               title="Adaptive Hybrid (Adaptive MPC + LQR) Trajectory",
+                               save_path="outputs/adaptive_hybrid_trajectory.png")
+        
+        viz.plot_tracking_error(errors, dt,
+                               title="Adaptive Hybrid Tracking Error",
+                               save_path="outputs/adaptive_hybrid_error.png")
+        
+        viz.plot_control_inputs(controls, dt,
+                               v_max=2.0, omega_max=3.0,
+                               title="Adaptive Hybrid Control Inputs",
+                               save_path="outputs/adaptive_hybrid_control.png")
+        
+        # Plot adaptive hybrid specific metrics
+        import matplotlib.pyplot as plt
+        
+        # Figure 1: Risk, blend weight, and adaptation
+        fig, axes = plt.subplots(4, 1, figsize=(12, 12), sharex=True)
+        t = np.arange(N - 1) * dt
+        
+        # Panel 1: Risk and blend weight
+        ax1 = axes[0]
+        ax1.plot(t, risk_history, 'b-', linewidth=1.0, alpha=0.7, label='Risk')
+        ax1.plot(t, blend_weights, 'r-', linewidth=2.0, label='Blend Weight w(t)')
+        ax1.axhline(0.3, color='g', linestyle='--', alpha=0.4, label='Risk Threshold')
+        ax1.fill_between(t, 0, blend_weights, alpha=0.15, color='red')
+        ax1.set_ylabel('Value')
+        ax1.set_title('Adaptive Hybrid: Risk-Based Blending with LMS Adaptation')
+        ax1.legend(loc='upper right')
+        ax1.grid(True, alpha=0.3)
+        ax1.set_ylim(-0.05, 1.05)
+        
+        # Panel 2: Parameter adaptation
+        ax2 = axes[1]
+        ax2.plot(t, param_history[:, 0], 'b-', linewidth=1.5, label='v_scale (linear velocity)')
+        ax2.plot(t, param_history[:, 1], 'r-', linewidth=1.5, label='omega_scale (angular velocity)')
+        ax2.axhline(1.0, color='k', linestyle='--', alpha=0.3, label='True value')
+        ax2.axhline(theta_init[0], color='b', linestyle=':', alpha=0.3)
+        ax2.axhline(theta_init[1], color='r', linestyle=':', alpha=0.3)
+        ax2.set_ylabel('Parameter Value')
+        ax2.set_title('LMS Parameter Adaptation (Online Learning)')
+        ax2.legend(loc='upper right')
+        ax2.grid(True, alpha=0.3)
+        
+        # Panel 3: Adaptation activity
+        ax3 = axes[2]
+        adapt_signal = adaptation_active.astype(float)
+        ax3.fill_between(t, 0, adapt_signal, alpha=0.3, color='green', label='Adaptation Active')
+        ax3.plot(t, adapt_signal, 'g-', linewidth=0.5, alpha=0.5)
+        ax3.set_ylabel('Active')
+        ax3.set_title('Adaptation Activity (Learning when w > 0.5)')
+        ax3.set_ylim(-0.1, 1.1)
+        ax3.legend(loc='upper right')
+        ax3.grid(True, alpha=0.3)
+        
+        # Panel 4: Control inputs
+        ax4 = axes[3]
+        ax4.plot(t, controls[:, 0], 'b-', linewidth=1.0, label='v (m/s)')
+        ax4.plot(t, controls[:, 1], 'r-', linewidth=1.0, label='omega (rad/s)')
+        ax4.set_ylabel('Control')
+        ax4.set_xlabel('Time (s)')
+        ax4.set_title('Blended Control Inputs')
+        ax4.legend(loc='upper right')
+        ax4.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        fig.savefig('outputs/adaptive_hybrid_blending.png', dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        
+        # Figure 2: Parameter convergence detail
+        fig2, ax = plt.subplots(1, 1, figsize=(10, 6))
+        ax.plot(t, param_history[:, 0], 'b-', linewidth=2.0, label='v_scale', alpha=0.8)
+        ax.plot(t, param_history[:, 1], 'r-', linewidth=2.0, label='omega_scale', alpha=0.8)
+        ax.axhline(1.0, color='k', linestyle='--', linewidth=1.5, alpha=0.5, label='True value (1.0)')
+        ax.fill_between(t, param_history[:, 0], 1.0, alpha=0.1, color='blue')
+        ax.fill_between(t, param_history[:, 1], 1.0, alpha=0.1, color='red')
+        ax.set_xlabel('Time (s)', fontsize=12)
+        ax.set_ylabel('Parameter Estimate', fontsize=12)
+        ax.set_title('LMS Parameter Convergence (Adaptive MPC)', fontsize=14, fontweight='bold')
+        ax.legend(loc='best', fontsize=11)
+        ax.grid(True, alpha=0.3)
+        fig2.tight_layout()
+        fig2.savefig('outputs/adaptive_mpc_params.png', dpi=150, bbox_inches='tight')
+        plt.close(fig2)
+        
+        print("\nPlots saved to outputs/")
+    
+    return {
+        'states': states,
+        'controls': controls,
+        'errors': errors,
+        'risk_history': risk_history,
+        'blend_weights': blend_weights,
+        'param_history': param_history,
+        'adaptation_active': adaptation_active,
+        'stats': stats,
+        'mean_error': mean_error,
+        'final_error': final_error,
+        'collision_count': collision_count,
+    }
+
+
 def main():
     # Parse arguments
     parser = argparse.ArgumentParser(description='Run hybrid LQR-MPC simulation')
-    parser.add_argument('--mode', type=str, choices=['lqr', 'mpc', 'compare', 'hybrid'], 
+    parser.add_argument('--mode', type=str, 
+                        choices=['lqr', 'mpc', 'compare', 'hybrid', 'adaptive_hybrid'], 
                         default='lqr', help='Simulation mode')
     parser.add_argument('--duration', type=float, default=20.0, help='Duration in seconds')
     parser.add_argument('--dt', type=float, default=0.02, help='Time step')
@@ -783,6 +1114,10 @@ def main():
         run_hybrid_simulation(duration=args.duration, dt=args.dt, 
                               visualize=not args.no_plot, scenario=args.scenario,
                               actuator_params=act_params)
+    elif args.mode == 'adaptive_hybrid':
+        run_adaptive_hybrid_simulation(duration=args.duration, dt=args.dt,
+                                       visualize=not args.no_plot, scenario=args.scenario,
+                                       actuator_params=act_params)
     
     print("\nSimulation complete!")
 

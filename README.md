@@ -30,13 +30,17 @@ This project implements a **smooth supervisory hybrid control system** for auton
 |-----------|------------|---------|
 | **Trajectory Tracking** | LQR | Low-risk, efficient tracking (DARE-based) |
 | **Obstacle Avoidance** | MPC | High-risk, constraint-aware (CVXPY/OSQP) |
+| **Adaptive Obstacle Avoidance** | Adaptive MPC + LMS | High-risk with online parameter learning |
 | **Blending Supervisor** | Sigmoid | Continuous arbitration: `u = w·u_mpc + (1-w)·u_lqr` |
+| **Adaptive Hybrid** | Adaptive MPC + LQR | Distance-based switching with online adaptation |
 
 **Key Features:**
 - Differential drive robot model with unicycle kinematics
 - DARE-based LQR with automatic gain computation
 - CVXPY-based MPC with linearized obstacle constraints, Tube MPC, and Δu penalty
+- **Adaptive MPC** with LMS (Least Mean Squares) parameter adaptation for velocity/angular velocity scaling
 - **Smooth blending** with anti-chatter guarantees (rate-limited sigmoid + hysteresis)
+- **Adaptive Hybrid Controller** combining Adaptive MPC and LQR with distance-based risk metrics
 - **Jerk-aware** control: peak/RMS/p95 jerk metrics logged automatically
 - Risk-based supervisory control with feasibility fallback
 - Comprehensive logging (JSON/CSV export)
@@ -66,7 +70,9 @@ Risk-Aware-Hybrid-LQR-MPC-Navigation-for-Autonomous-Systems/
 │       ├── controllers/
 │       │   ├── lqr_controller.py      # LQR + DARE solver
 │       │   ├── mpc_controller.py      # MPC + CVXPY/OSQP
+│       │   ├── adaptive_mpc_controller.py  # ⭐ Adaptive MPC + LMS
 │       │   ├── hybrid_blender.py      # ⭐ Smooth blending supervisor
+│       │   ├── adaptive_hybrid_controller.py  # ⭐ Adaptive MPC + LQR hybrid
 │       │   ├── risk_metrics.py        # Risk assessment engine
 │       │   └── yaw_stabilizer.py      # PID heading stabilizer
 │       ├── trajectory/
@@ -115,8 +121,11 @@ python run_simulation.py --mode lqr
 # MPC with obstacle avoidance
 python run_simulation.py --mode mpc
 
-# Compare LQR vs MPC
-python run_simulation.py --mode compare
+# Hybrid blending (MPC + LQR)
+python run_simulation.py --mode hybrid
+
+# Adaptive Hybrid (Adaptive MPC + LQR with online learning)
+python run_simulation.py --mode adaptive_hybrid
 ```
 
 ### 3. View Results
@@ -262,11 +271,13 @@ source install/setup.bash
 python run_simulation.py --mode lqr      # LQR only
 python run_simulation.py --mode mpc      # MPC with obstacles
 python run_simulation.py --mode compare  # Side-by-side comparison
-python run_simulation.py --mode hybrid   # ⭐ Smooth blending hybrid
+python run_simulation.py --mode hybrid   # ⭐ Smooth blending hybrid (MPC + LQR)
+python run_simulation.py --mode adaptive_hybrid  # ⭐ Adaptive MPC + LQR with LMS learning
 
 # Options
-python run_simulation.py --mode hybrid --duration 30 --scenario dense
-python run_simulation.py --mode hybrid --scenario corridor --no-plot
+python run_simulation.py --mode adaptive_hybrid --duration 30 --scenario dense
+python run_simulation.py --mode adaptive_hybrid --scenario corridor --realistic
+python run_simulation.py --mode hybrid --scenario default --no-plot
 ```
 
 **Obstacle Scenarios:**
@@ -319,6 +330,77 @@ ros2 launch hybrid_controller lqr_tracking.launch.py use_sim_time:=true
 ---
 
 ## Architecture
+
+### Controller Comparison
+
+| Controller | Adaptation | Obstacle Handling | Use Case |
+|------------|-----------|-------------------|----------|
+| **LQR** | None | None | Free-space tracking |
+| **MPC** | None | Linearized constraints | Static obstacles |
+| **Adaptive MPC** | LMS online learning | Exact nonlinear constraints | Dynamic/uncertain systems |
+| **Hybrid (MPC+LQR)** | None | Risk-based blending | Mixed environments |
+| **Adaptive Hybrid** | LMS when near obstacles | Distance-based switching | Uncertain dynamics + obstacles |
+
+### Adaptive Hybrid Controller
+
+The **Adaptive Hybrid Controller** combines the best of both worlds:
+
+**Architecture:**
+```
+                    ┌─────────────────────────────────┐
+                    │   Distance-Based Risk Metrics   │
+                    │   (Obstacle Proximity)          │
+                    └────────────┬────────────────────┘
+                                 │ risk
+                                 ▼
+                    ┌─────────────────────────────────┐
+                    │   Sigmoid Blending Supervisor   │
+                    │   w(t) = sigmoid(risk)          │
+                    │   + hysteresis + rate limit     │
+                    └────────────┬────────────────────┘
+                                 │ w(t)
+                ┌────────────────┴────────────────┐
+                │                                 │
+                ▼                                 ▼
+    ┌──────────────────────┐        ┌──────────────────────┐
+    │   LQR Controller     │        │  Adaptive MPC        │
+    │   (Far from obs)     │        │  + LMS Adaptation    │
+    │   Efficient tracking │        │  (Near obstacles)    │
+    └──────────┬───────────┘        └──────────┬───────────┘
+               │ u_lqr                          │ u_mpc
+               │                                │
+               └────────────┬───────────────────┘
+                            ▼
+                   u = w·u_mpc + (1-w)·u_lqr
+                            │
+                            ▼
+                   ┌─────────────────┐
+                   │  LMS Adaptation │
+                   │  (when w > 0.5) │
+                   │  θ̂ ← θ̂ + Γ·Φᵀ·e │
+                   └─────────────────┘
+```
+
+**Key Features:**
+1. **Distance-Based Switching**: Uses obstacle proximity to determine control mode
+   - Far from obstacles (low risk): LQR dominates (w ≈ 0)
+   - Near obstacles (high risk): Adaptive MPC dominates (w ≈ 1)
+   
+2. **Online Parameter Adaptation**: LMS algorithm learns velocity/angular velocity scaling factors
+   - Adapts only when MPC is active (w > 0.5)
+   - Corrects for model uncertainties and actuator variations
+   - Parameters: `θ = [v_scale, ω_scale]`
+
+3. **Smooth Blending**: Same anti-chatter guarantees as standard hybrid
+   - Rate-limited sigmoid: `|dw/dt| ≤ dw_max`
+   - Hysteresis deadband prevents oscillation
+   - Graceful degradation on MPC failure
+
+**When to Use:**
+- Robot dynamics are uncertain or time-varying
+- Actuator characteristics unknown or changing
+- Need both obstacle avoidance AND online learning
+- Mixed environments with free space and obstacles
 
 ### Smooth Blending Control Flow
 
