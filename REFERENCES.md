@@ -350,3 +350,22 @@ Academic references for theoretical foundations and implementation decisions.
 | 2 | Awad et al. (2022). "Model Predictive Control with Fuzzy Logic Switching for Path Tracking of Autonomous Vehicles." | ISA Transactions 129A, pp.193–205 | 10.1016/j.isatra.2021.12.022 | Validates our Phase 3→4 pivot. Fuzzy soft-switching outperforms hard-switching for path tracking — exactly what we found. Our sigmoid blending is a principled version of their fuzzy membership approach. |
 | 3 | Kong et al. (2023). "Hybrid iLQR Model Predictive Control for Contact-Implicit Stabilization on Legged Robots." | IEEE T-RO 39(6), pp.4712–4727 | IEEE T-RO 2023 | Analogous hybrid structure for legged robots (contact/no-contact modes). Their saltation-matrix gradient approach is the algebraic counterpart to our smooth blending. Confirms mode-boundary treatment is the key challenge. |
 | 4 | Le Cleac'h et al. (2024). "Fast Contact-Implicit Model Predictive Control." | IEEE T-RO 40, pp.1617–1629 | 10.1109/TRO.2024.3351554 | Relevant for solver speedup methodology. Exploits QP sparsity structure for real-time CI-MPC — advanced version of our CVXPY parametrisation idea. Relevant if we extend to horizon N≥15. |
+### 6.4 Stochastic MPC and Covariance-Driven Risk
+*To support the novel Covariance-Driven Mahalanobis Metric integration into the hybrid logic.*
+
+1. **Mesbah, A. (2016). "Stochastic model predictive control: An overview and perspectives for future research."** IEEE Control Systems Magazine.
+   *Relevance:* Foundational overview of chance constraints and their application in dynamic control environments. Used to establish the bounds for our prob(\text{collision}) $\le \epsilon$ logic.
+2. **Farina, M., Giulioni, L., & Scattolini, R. (2016). "Stochastic linear model predictive control with chance constraints – A review."** Journal of Process Control.
+   *Relevance:* Analyzes tube-based stochastic distributions. Guided the mathematical shift from rigid geometric tubes to dynamic probability density matrices $.
+3. **Schwarm, A. T., & Nikolaou, M. (1999). "Chance-constrained model predictive control."** AIChE Journal.
+   *Relevance:* Core mathematical proofs for Gaussian disturbance propagation and calculating the margin of Mahalanobis distance thresholds.
+
+### 6.4 Stochastic MPC and Covariance-Driven Risk
+*To support the novel Covariance-Driven Mahalanobis Metric integration into the hybrid logic.*
+
+1. **Mesbah, A. (2016). "Stochastic model predictive control: An overview and perspectives for future research."** IEEE Control Systems Magazine.
+   *Relevance:* Foundational overview of chance constraints and their application in dynamic control environments. Used to establish the bounds for our prob(collision) <= epsilon logic.
+2. **Farina, M., Giulioni, L., & Scattolini, R. (2016). "Stochastic linear model predictive control with chance constraints."** Journal of Process Control.
+   *Relevance:* Analyzes stochastic distributions. Guided the mathematical shift from rigid geometric tubes to dynamic probability density matrices.
+3. **Schwarm, A. T., & Nikolaou, M. (1999). "Chance-constrained model predictive control."** AIChE Journal.
+   *Relevance:* Core mathematical proofs for Gaussian disturbance propagation and calculating the margin of Mahalanobis distance thresholds.
