@@ -7,7 +7,7 @@ obstacle configurations, sensor noise, and control latency.
 
 Usage:
     python evaluation/statistical_runner.py --configs 50 --modes hybrid lqr mpc
-    python evaluation/statistical_runner.py --configs 10 --modes adaptive hybrid_adaptive
+    python evaluation/statistical_runner.py --configs 10 --modes adaptive hybrid_adaptive checkpoint
     python evaluation/statistical_runner.py --configs 100 --noise 0.01 --delay 20
 
 Output:
@@ -25,6 +25,9 @@ import numpy as np
 from pathlib import Path
 from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Any, Optional, Tuple
+
+# Default testing modes - automatically include advanced controllers
+DEFAULT_MODES = ['hybrid_adaptive', 'adaptive', 'checkpoint', 'hybrid', 'lqr', 'mpc']
 
 # Add project root and source directories to path
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -681,7 +684,7 @@ def run_statistical_validation(
         Dictionary mapping mode -> AggregatedResults
     """
     if modes is None:
-        modes = ['lqr', 'mpc', 'hard_switch', 'hybrid']
+        modes = ['hybrid_adaptive', 'adaptive', 'hybrid', 'mpc', 'lqr']
 
     if any(mode in ADAPTIVE_MODES for mode in modes):
         get_adaptive_mpc_class()
@@ -867,12 +870,12 @@ def main():
     parser.add_argument('--configs', type=int, default=50,
                         help='Number of randomized obstacle configs')
     parser.add_argument('--modes', nargs='+', 
-                        default=['lqr', 'mpc', 'hard_switch', 'hybrid'],
-                        choices=['lqr', 'mpc', 'hard_switch', 'hybrid', 'adaptive', 'hybrid_adaptive'],
+                        default=DEFAULT_MODES,
+                        choices=['lqr', 'mpc', 'hard_switch', 'hybrid', 'adaptive', 'hybrid_adaptive', 'checkpoint'],
                         help='Controller modes to compare')
     parser.add_argument('--duration', type=float, default=20.0,
                         help='Simulation duration (seconds)')
-    parser.add_argument('--trajectory', type=str, default='figure8',
+    parser.add_argument('--trajectory', type=str, default='clothoid',
                         help='Reference trajectory type')
     parser.add_argument('--checkpoint-mode', action='store_true',
                         help='Enable checkpoint-based reference tracking')
@@ -888,7 +891,7 @@ def main():
                         help='Actuator time constant (seconds)')
     parser.add_argument('--actuator-noise', type=float, default=0.0,
                         help='Actuator execution noise std')
-    parser.add_argument('--scenario', type=str, default='random',
+    parser.add_argument('--scenario', type=str, default='stochastic_navigation',
                         choices=['random', 'corridor', 'bugtrap', 'dense', 'moving', 'random_walk',
                                  'baseline_static', 'urban_dynamic', 'stochastic_navigation',
                                  'oscillatory_tracking', 'vehicle_realistic'],

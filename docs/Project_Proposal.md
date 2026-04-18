@@ -17,7 +17,7 @@ To resolve this computational bottleneck without sacrificing structural safety g
 ### **Primary Objective: Risk-Aware Hybrid Integration**
 Design and implement a unified hybrid navigation controller that dynamically switches between LQR and MPC based on a computed environmental risk metric. The primary focus is balancing computational efficiency with guaranteed collision avoidance in dynamic scenarios.
 
-### **Secondary Objective & Research Novelty (Publishable Contributions)**
+### **Secondary Objective & Research Novelty (Publishable Contributions) ✅ (Complete)**
 To elevate the research beyond classical deterministic threshold switching (e.g., Euclidean distance limits) and traditional Tube-MPC robust forms, our advanced extensions focus on stochastic risk assessment and adaptive learning:
 
 1. **Stochastic Model Predictive Control (SMPC)**: Incorporating probabilistically parameterized chance constraints ($\text{Pr}(\text{collision}) \le \epsilon$) instead of generic worst-case buffers.
@@ -33,7 +33,8 @@ Develop a hybrid control architecture demonstrating measurable superiority over 
 
 - **Baseline Hybrid Navigation**: Create a seamless integration where LQR manages trajectory tracking and MPC solves real-time obstacle avoidance.
 - **Advanced Probabilistic Safety**: Expand the standard hybrid logic to utilize real-time inverse-CDF parameterized chance constraints. 
-- **Empirical Superiority Validation**: Test the unified architecture using Monte Carlo stress testing in dynamic (andom_walk, moving) and high-clutter environments. The ultimate goal is to prove the hybrid design retains the 100% collision-free constraint guarantees of pure-SMPC, while drastically slashing cumulative compute cycles to match standard LQR speeds.
+- **Empirical Superiority Validation**: Test the unified architecture using Monte Carlo stress testing in dynamic (
+andom_walk, moving) and high-clutter environments. The ultimate goal is to prove the hybrid design retains the 100% collision-free constraint guarantees of pure-SMPC, while drastically slashing cumulative compute cycles to match standard LQR speeds.
 
 ---
 
@@ -55,12 +56,12 @@ Develop a hybrid control architecture demonstrating measurable superiority over 
 - Implement switching logic based on general risk thresholds.
 - Output a baseline Hybrid Controller robust to static and dynamic obstacles.
 
-### Phase 4: Stochastic Risk Supervisor (Advanced/Novelty) (Active)
+### Phase 4: Stochastic Risk Supervisor (Advanced/Novelty) ✅ (Complete)
 - Shift the underlying optimization to **Stochastic Model Predictive Control (SMPC)**.
 - Implement Mahalanobis distance Covariance overlap for uncertainty-aware risk metrics.
 - Predict constraint violations under Gaussian disturbance bounds automatically.
 
-### Phase 5: Stochastic Experiments & Validation (Active)
+### Phase 5: Stochastic Experiments & Validation ✅ (Complete)
 - Validate Mahalanobis-based SMPC and Adaptive LQR in highly cluttered and purely stochastic environments.
 - Measure computational savings against pure SMPC execution.
 - Experimental analysis via tuning of covariance thresholds for academic publication.

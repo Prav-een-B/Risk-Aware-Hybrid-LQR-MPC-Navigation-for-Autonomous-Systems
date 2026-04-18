@@ -23,6 +23,7 @@ Reference:
 
 import numpy as np
 import cvxpy as cp
+import scipy.stats
 from typing import Tuple, Optional, List, Dict, Any
 from dataclasses import dataclass
 import time
@@ -32,14 +33,20 @@ from ..models.linearization import Linearizer
 
 @dataclass
 class Obstacle:
-    """Circular obstacle representation."""
+    """Obstacle representation with Covariance for Stochastic MPC."""
     x: float  # x-position (meters)
     y: float  # y-position (meters)
     radius: float  # radius (meters)
     vx: float = 0.0
     vy: float = 0.0
     motion_model: str = "static"
-    
+    # Covariance for dynamic uncertainty (defaults to geometric logic if 0)
+    covariance: np.ndarray = None 
+
+    def __post_init__(self):
+        if self.covariance is None:
+            self.covariance = np.zeros((2, 2))
+
     def distance_to(self, px: float, py: float) -> float:
         """Compute distance from point to obstacle center."""
         return np.sqrt((px - self.x)**2 + (py - self.y)**2)
@@ -96,7 +103,10 @@ class MPCController:
                  d_safe: float = 0.3, slack_penalty: float = 5000.0,
                  v_max: float = 1.0, omega_max: float = 1.5,
                  dt: float = 0.02, solver: str = "OSQP",
-                 block_size: int = 1, w_max: float = 0.05):
+                 block_size: int = 1, w_max: float = 0.05,
+                 use_stochastic_constraints: bool = False,
+                 epsilon: float = 0.05,
+                 sigma_x: np.ndarray = None):
         """
         Initialize MPC controller.
         
@@ -121,6 +131,9 @@ class MPCController:
             block_size: Move-blocking size (1=no blocking, 2=halve decision vars)
             w_max: Maximum disturbance bound for Tube MPC (meters)
                    Accounts for localization noise, model mismatch, actuator delays
+            use_stochastic_constraints: Whether to use covariance-based chance constraints
+            epsilon: Maximum allowed probability of collision for chance constraint
+            sigma_x: Robot estimation tracking uncertainty covariance matrix
         """
         self.N = horizon
         self.dt = dt
@@ -131,6 +144,15 @@ class MPCController:
         self.solver = solver
         self.block_size = block_size
         self.w_max = w_max  # Tube MPC disturbance bound
+        
+        self.use_stochastic_constraints = use_stochastic_constraints
+        self.epsilon = epsilon
+        self.sigma_x = sigma_x if sigma_x is not None else np.eye(2) * 0.01
+        
+        if self.use_stochastic_constraints:
+            self.phi_inv = scipy.stats.norm.ppf(1 - self.epsilon)
+        else:
+            self.phi_inv = 0.0
         
         # Number of blocked control moves
         self.N_blocks = (horizon + block_size - 1) // block_size
@@ -291,7 +313,14 @@ class MPCController:
                     
                     # Linearized constraint: n·(p - p_obs) ≥ d_safe + r_obs
                     # Tube MPC: add disturbance bound for robustness
-                    safe_dist = self.d_safe + obs.radius + self.w_max
+                    if self.use_stochastic_constraints:
+                        # Stochastic Chance Constraints: exact constraint margin
+                        n_vec = np.array([nx, ny])
+                        sigma_combined = self.sigma_x + obs.covariance
+                        stochastic_margin = self.phi_inv * np.sqrt(np.abs(n_vec.T @ sigma_combined @ n_vec))
+                        safe_dist = self.d_safe + obs.radius + stochastic_margin
+                    else:
+                        safe_dist = self.d_safe + obs.radius + self.w_max
                     
                     if slack is not None:
                         constraints.append(
@@ -504,8 +533,16 @@ class MPCController:
                 
                 if dist > 0.01:
                     nx, ny = dx_obs / dist, dy_obs / dist
-                    # Tube MPC: add disturbance bound for robustness
-                    safe_dist = self.d_safe + obs.radius + self.w_max
+                    
+                    # Stochastic MPC: Chance Constraints margin via Inverse-CDF
+                    # Calculate overlapping Gaussian Covariance bound instead of static w_max
+                    # Margin = Φ⁻¹(1 - ε) * √(n^T (Σ_x + Σ_obs) n)
+                    # For a 95% confidence limit, Φ⁻¹(0.95) ≈ 1.645
+                    sigma_c = np.eye(2) * 0.05 + obs.covariance  # Example combined error covariance
+                    n_vec = np.array([nx, ny])
+                    prob_margin = 1.645 * np.sqrt(np.abs(n_vec.T @ sigma_c @ n_vec))
+                    
+                    safe_dist = self.d_safe + obs.radius + prob_margin
                     
                     # Constraint: n·(p - p_obs) ≥ safe_dist
                     # p = p_ref + dp

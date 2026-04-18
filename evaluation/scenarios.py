@@ -30,6 +30,13 @@ class UncertaintyConfig:
     # Control latency
     control_delay_steps: int = 0             # Pipeline delay (timesteps)
 
+    # Covariances for Stochastic MPC and Full Covariance-Driven Risk
+    estimation_covariance: np.ndarray = None  # Replaces fixed w_max scalar bounds
+    
+    def __post_init__(self):
+        if self.estimation_covariance is None:
+            self.estimation_covariance = np.zeros((2, 2))
+
 
 class UncertaintyInjector:
     """Handles uncertainty injection for process noise, sensor noise, model mismatch, and control latency."""
