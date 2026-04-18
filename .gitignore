@@ -40,6 +40,13 @@ agent.md
 TEMP_TASKLIST.md
 Workflow.txt
 TASK_*_IMPLEMENTATION_SUMMARY.md
+*.md
+!CHANGELOG.md
+!README.md
+!REFERENCES.md
+!docs/
+!docs/**/*.md
+!docs/*.md
 
 # Loose debug dumps at root
 stat_err.txt

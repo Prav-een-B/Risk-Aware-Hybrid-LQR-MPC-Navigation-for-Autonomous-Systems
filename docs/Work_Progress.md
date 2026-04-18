@@ -1,6 +1,6 @@
 # Work Progress
 
-Updated: 2026-04-12
+Updated: 2026-04-18
 
 ## 1. Current Repository State
 
@@ -23,15 +23,15 @@ integration work is now wired into the runnable workflow.
 | Hybrid LQR + Adaptive MPC mode | Implemented | `--mode hybrid_adaptive` now blends LQR and adaptive MPC in the runnable path |
 | Dynamic obstacle scenarios | Implemented | `moving` and `random_walk` scenarios now run through `DynamicObstacleField` and per-step state updates |
 | Safety/sensing inflation wiring | Implemented | `InflationConfig` now feeds controller obstacle inflation and risk-obstacle views |
+| Adaptive MPC in evaluation runner | Implemented | Wired correctly into `evaluation/statistical_runner.py` metrics arrays |
+| Checkpoint-based reference tracking | Implemented | Obstacle-density exponential checkpoint generation, adaptive switching (`CheckpointManager`), and finite-bounded local horizon extraction are fully integrated |
 
 ### Open items
 
 | Area | Status | Notes |
 |---|---|---|
-| Adaptive MPC in evaluation runner | Partial | Standalone modes are wired; `evaluation/statistical_runner.py` still needs adaptive/hybrid-adaptive experiment wiring |
-| Checkpoint-based reference tracking | Implemented | Curvature-aware checkpoint generation, adaptive switching (`CheckpointManager`), and local horizon extraction are integrated in standalone and evaluation workflows |
 | Uncertainty-aware risk model | Partial | Obstacle inflation is now wired, but risk remains primarily geometric and not yet covariance-driven end-to-end |
-| Complex trajectory suite | Partial | Figure-8, circle, clover, slalom, and checkpoint presets now exist in the standalone path, but the evaluation runner still defaults to the older benchmark setup |
+| Complex trajectory suite | Partial | Figure-8, circle, clover, slalom, and checkpoint presets now exist in the standalone path, but the evaluation runner defaults could utilize them more consistently |
 | Docker validation workflow | Implemented | `Dockerfile`, validation scripts, artifact collection, and pytest smoke tests are now present |
 | ROS2 hybrid Gazebo harness | Partial | `hybrid_node.py`, `kinematic_sim_node.py`, and `hybrid_gazebo.launch.py` now exist, but odometry still comes from the lightweight ROS simulator rather than a Gazebo robot plugin |
 
@@ -42,16 +42,16 @@ integration work is now wired into the runnable workflow.
 | Milestone | Status | Summary |
 |---|---|---|
 | Trajectory family expansion | Completed | Added seven extended trajectories: lissajous, spiral, spline_path, urban_path, sinusoidal, random_waypoint, clothoid |
-| Curvature and checkpoint generation | Completed | Added finite-difference curvature computation and adaptive checkpoint spacing |
-| Adaptive checkpoint switching | Completed | Added curvature-scaled switching radius, hysteresis logic, and forward-progress timeout |
-| Controller integration | Completed | Unified checkpoint-mode reference extraction across LQR, MPC, Adaptive MPC, Hybrid, Hybrid-Adaptive |
+| Obstacle-aware checkpoint generation | Completed | Replaced curvature metric with an exponential obstacle-density spacing function to ensure kinematically feasible segments |
+| Adaptive checkpoint switching | Completed | Added spacing-scaled switching radius, hysteresis logic, and forward-progress timeout |
+| Controller integration | Completed | Unified checkpoint-mode reference extraction across LQR, MPC, Adaptive MPC, Hybrid, Hybrid-Adaptive, and bounding local velocities via `v_max` |
 | Scenario and metrics integration | Completed | Added five checkpoint-aware scenarios and checkpoint completion/time/overshoot reporting |
 | Property and integration validation | Completed | Added properties for formulas, spacing, switching, horizon extraction, dynamics, uncertainty, and metrics |
 
 ### Key design decisions
 
 1. Keep backward compatibility by preserving legacy trajectories while adding checkpoint-mode support behind explicit CLI flags.
-2. Use curvature as the primary geometric signal for checkpoint spacing and switching radius adaptation.
+2. Use exponential obstacle-density (`S_{min} + (S_{max} - S_{min}) * e^{-\gamma * N_{obs}}`) as the primary geometric signal for checkpoint spacing.
 3. Use hysteresis plus forward-progress timeout to avoid oscillatory switching and deadlock near difficult checkpoints.
 4. Keep obstacle representations separated by purpose (`controller_obstacles`, `risk_obstacles`, `actual_obstacles`) to avoid mixing safety inflation with collision truth.
 5. Keep uncertainty injection modular (process noise, sensor noise, mismatch, delay) so stress tests can be composed per scenario.

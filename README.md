@@ -440,11 +440,11 @@ Based on: Koehler (2025), *Certainty-equivalent adaptive MPC for uncertain nonli
 
 **Status:** Implemented and wired into standalone CLI runner (`--mode adaptive`, `--mode hybrid_adaptive`) and integrated with checkpoint-capable reference extraction.
 
-### Trajectory Families
-
-`reference_generator.py` supports 12 families: `figure8`, `circle`, `clover`, `slalom`, `checkpoint_path`, plus seven extended types (`lissajous`, `spiral`, `spline_path`, `urban_path`, `sinusoidal`, `random_waypoint`, `clothoid`).
-
-Checkpoint mode is available via `--checkpoint-mode` and uses curvature-aware checkpoint generation with adaptive switching and local reference-horizon extraction.
+### Trajectory Families & Checkpoint Tracking
+  
+  `reference_generator.py` supports 12 families: `figure8`, `circle`, `clover`, `slalom`, `checkpoint_path`, plus seven extended types (`lissajous`, `spiral`, `spline_path`, `urban_path`, `sinusoidal`, `random_waypoint`, `clothoid`).
+  
+  Checkpoint mode is available via `--checkpoint-mode` and uses an **obstacle-density exponential spacing algorithm** ($S_{min} + (S_{max} - S_{min}) \cdot e^{-\gamma \cdot N_{obs}}$) with dynamic hysteresis switching and kinematically feasible local reference-horizon extraction for Model Predictive Control compatibility.
 
 ### Docker and Gazebo Harness
 

@@ -3,13 +3,13 @@
 Academic and technical references that inform the current repository and the
 next implementation phase.
 
-Last updated: 2026-04-06
+Last updated: 2026-04-18
 
-## 0. Implementation Update Note (2026-04-06)
+## 0. Implementation Update Note (2026-04-18)
 
-- This integration pass (dynamic obstacles + adaptive and hybrid-adaptive
-  standalone wiring) used the existing reference set already documented below.
-- No new external papers were added in this pass.
+- This integration pass introduced an obstacle-density exponential equation for checkpoint spacing instead of curvature, resolving sparsity and kinematic discontinuity over the MPC lookahead horizon.
+- The Adaptive Hybrid LQR+MPC strategy leveraging LMS (Least Mean Squares) parameter updates was merged and fully integrated into the test suites.
+- References remain consistent with prior standalone wiring.
 
 ## 1. Local Books
 

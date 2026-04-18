@@ -18,6 +18,24 @@ Reference textbooks for theoretical foundations:
 
 ---
 
+## [0.8.0] - 2026-04-18
+
+### Feature: Checkpoint Stability, Obstacle-Density Rework & Adaptive Hybrid Merge
+
+This release brings stability and optimization to the dual-mode continuous/checkpoint path tracking, alongside merging in a robust Adaptive Hybrid Controller.
+
+#### What changed
+1. Refactored **Checkpoint Spacing** to use an **Obstacle-Density Exponential** formula instead of curvature, resolving issues where sparse checkpoints generated kinematically disconnected references.
+2. Modified the MPC lookahead horizon extraction to dynamically cap requested velocities by parsing `v_max`, preventing solver failures due to unachievable speeds in narrow/sparse node lists.
+3. Merged `main`, introducing the `Adaptive Hybrid Controller` which fuses a conventional LQR with an Adaptive MPC relying on online LMS parameter updates.
+4. Resolved extensive multi-file merge conflicts and modernized GitHub Actions testing dependencies.
+
+#### Why this changed
+- Previous curvature-based generation placed checkpoints too far apart on straightaways, confusing the 10-step MPC horizon into requesting near-infinite acceleration. The exponential density equation smooths these gaps.
+- `main` branch added mature parameter-learning features necessary for full benchmark scenarios.
+
+---
+
 ## [0.7.4] - 2026-04-12
 
 ### Feature: Checkpoint-Based Trajectory Tracking
