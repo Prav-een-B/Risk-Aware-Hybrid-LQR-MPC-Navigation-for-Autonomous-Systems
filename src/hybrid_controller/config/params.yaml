@@ -31,6 +31,11 @@ checkpoint_manager:
   hysteresis_margin: 0.05     # Hysteresis band to prevent chattering (meters)
   forward_progress_timeout: 1.0 # Timeout for forward progress requirement (seconds)
   v_max: 1.0                  # Maximum reference velocity (m/s)
+
+# Trajectory parameters (Figure-8 / Lemniscate)
+trajectory:
+  amplitude: 2.0              # Spatial size of trajectory (meters)
+  frequency: 0.5              # Angular frequency (rad/s)
   
 # Robot parameters
 robot:
