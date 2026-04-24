@@ -3,8 +3,6 @@
 .venv/
 venv/
 env/
-.kiro/
-.hypothesis/
 
 # Python
 __pycache__/
@@ -17,14 +15,7 @@ __pycache__/
 # Simulation Outputs
 logs/
 outputs/
-artifacts/
-rosbags/
 *.log
-
-# ROS2 bag files
-*.db3
-*.db3-wal
-*.db3-shm
 
 # IDE
 .vscode/
@@ -35,28 +26,12 @@ build/
 dist/
 *.egg-info/
 
-# Agent/workflow scratch files
-agent.md
-TEMP_TASKLIST.md
-Workflow.txt
-TASK_*_IMPLEMENTATION_SUMMARY.md
-*.md
-!CHANGELOG.md
-!README.md
-!REFERENCES.md
-!docs/
-!docs/**/*.md
-!docs/*.md
-
-# Loose debug dumps at root
+# Loose result/log dumps at root
+*.txt
 stat_err.txt
 runner_output.txt
 commit_status.txt
 hybrid_error.txt
-bugtrap_results.log
-corridor_results.log
-corridor_run.log
-dense_stress_test.log
 
 # Simulation raw data (timestamped dumps)
 logs/*.json
@@ -77,4 +52,3 @@ docs/*.pdf
 # Jupyter / IPython
 .ipynb_checkpoints/
 
-COMMIT_MESSAGE.md
