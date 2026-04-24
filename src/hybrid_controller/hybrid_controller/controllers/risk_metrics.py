@@ -53,7 +53,6 @@ class RiskMetrics:
                  d_trigger: float = 1.0,
                  alpha: float = 0.6,
                  beta: float = 0.4,
-                 distance_method: str = "mahalanobis",
                  threshold_low: float = 0.2,
                  threshold_medium: float = 0.5,
                  threshold_high: float = 0.8):
@@ -65,7 +64,6 @@ class RiskMetrics:
             d_trigger: Distance at which risk starts increasing (meters)
             alpha: Weight for distance-based risk [0, 1]
             beta: Weight for predictive risk [0, 1]
-            distance_method: "mahalanobis" for advanced covariance probability, "euclidean" for basic geometric tubes
             threshold_low: Risk level threshold for "low"
             threshold_medium: Risk level threshold for "medium"
             threshold_high: Risk level threshold for "high"
@@ -74,7 +72,6 @@ class RiskMetrics:
         self.d_trigger = d_trigger
         self.alpha = alpha
         self.beta = beta
-        self.distance_method = distance_method
         self.threshold_low = threshold_low
         self.threshold_medium = threshold_medium
         self.threshold_high = threshold_high
@@ -88,17 +85,16 @@ class RiskMetrics:
                                state: np.ndarray, 
                                obstacles: List[Dict]) -> Tuple[float, float, int]:
         """
-        Compute distance risk based on the configured distance method (Euclidean or Mahalanobis).
-        """
-        if self.distance_method == "euclidean":
-            return self._compute_euclidean_risk(state, obstacles)
-        return self._compute_mahalanobis_risk(state, obstacles)
-
-    def _compute_euclidean_risk(self, 
-                                 state: np.ndarray, 
-                                 obstacles: List[Dict]) -> Tuple[float, float, int]:
-        """
-        Original Euclidean distance risk with linear interpolation.
+        Compute distance-based risk from current position to obstacles.
+        
+        Risk function: r(d) = max(0, 1 - (d - d_safe) / (d_trigger - d_safe))
+        
+        Args:
+            state: Current robot state [px, py, theta]
+            obstacles: List of obstacle dicts with 'x', 'y', 'radius'
+            
+        Returns:
+            Tuple of (risk_value, min_distance, nearest_obstacle_id)
         """
         if not obstacles:
             return 0.0, float('inf'), -1
@@ -109,6 +105,7 @@ class RiskMetrics:
         max_risk = 0.0
         
         for i, obs in enumerate(obstacles):
+            # Distance from robot to obstacle edge
             dist_to_center = np.sqrt((px - obs['x'])**2 + (py - obs['y'])**2)
             dist_to_edge = dist_to_center - obs['radius']
             
@@ -116,72 +113,16 @@ class RiskMetrics:
                 min_distance = dist_to_edge
                 nearest_id = i
             
+            # Compute risk for this obstacle
             if dist_to_edge <= self.d_safe:
+                # Inside safety zone or colliding
                 risk = 1.0
             elif dist_to_edge >= self.d_trigger:
+                # Far from obstacle
                 risk = 0.0
             else:
+                # Linear interpolation between d_safe and d_trigger
                 risk = 1.0 - (dist_to_edge - self.d_safe) / (self.d_trigger - self.d_safe)
-            
-            max_risk = max(max_risk, risk)
-        
-        return max_risk, min_distance, nearest_id
-
-    def _compute_mahalanobis_risk(self, 
-                                   state: np.ndarray, 
-                                   obstacles: List[Dict]) -> Tuple[float, float, int]:
-        """
-        Compute fully Covariance-driven Mahalanobis distance risk.
-        Replaces strict Euclidean linear interpolation with overlapping Gaussian spread.
-        """
-        if not obstacles:
-            return 0.0, float('inf'), -1
-        
-        px, py = state[0], state[1]
-        
-        # Estimate generic robot tracking covariance if none exists natively
-        sigma_x = np.eye(2) * 0.1  # Simplified standard covariance estimate for now
-        
-        min_distance = float('inf')
-        nearest_id = -1
-        max_risk = 0.0
-        
-        for i, obs in enumerate(obstacles):
-            ox, oy = obs['x'], obs['y']
-            radius = obs['radius']
-            
-            # Combine covariances
-            # Convert obstacle Dict generic representation, assuming it holds 'covariance' if provided
-            sigma_obs = np.array(obs.get('covariance', np.zeros((2,2))))
-            if np.all(sigma_obs == 0):
-                sigma_obs = np.eye(2) * 0.05
-            
-            sigma_c_inv = np.linalg.inv(sigma_x + sigma_obs)
-            diff = np.array([px - ox, py - oy])
-            
-            # Mahalanobis Distance formulation
-            mahalanobis_dist = np.sqrt(diff.T @ sigma_c_inv @ diff)
-            
-            # Base physical distance
-            dist_to_center = np.sqrt(diff[0]**2 + diff[1]**2)
-            dist_to_edge = dist_to_center - radius
-            
-            if dist_to_edge < min_distance:
-                min_distance = dist_to_edge
-                nearest_id = i
-            
-            # Translate Mahalanobis constraint into a [0, 1] risk spectrum 
-            # where a Mahalanobis distance under 'trigger_threshold' starts indicating risk.
-            # Using standard chi-square thresholds for 2DOF:
-            mahalanobis_safe_threshold = 2.0  # roughly 95% confidence inside this boundary
-            mahalanobis_trigger_threshold = 4.0 
-            
-            if mahalanobis_dist <= mahalanobis_safe_threshold:
-                risk = 1.0
-            elif mahalanobis_dist >= mahalanobis_trigger_threshold:
-                risk = 0.0
-            else:
-                risk = 1.0 - (mahalanobis_dist - mahalanobis_safe_threshold) / (mahalanobis_trigger_threshold - mahalanobis_safe_threshold)
             
             max_risk = max(max_risk, risk)
         

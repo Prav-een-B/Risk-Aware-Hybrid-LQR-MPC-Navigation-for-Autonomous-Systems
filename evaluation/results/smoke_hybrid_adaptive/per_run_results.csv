@@ -1,2 +1,0 @@
-mode,config_id,seed,mean_tracking_error,max_tracking_error,final_tracking_error,mean_solve_time_ms,max_solve_time_ms,linear_jerk_rms,angular_jerk_rms,linear_jerk_peak,angular_jerk_peak,infeasible_count,collision_count,total_control_effort,blend_weight_mean,smooth_transitions,wall_time_s
-hybrid_adaptive,0,42,0.05537518907462301,0.10023775192351575,0.005532094177495638,108.42376666065927,130.24999998742715,44.63903757103423,1.6565587408382547,122.74119571987603,5.587945007978146,6,0,42.6471237266368,0.006253584150509825,0,0.7370316000015009
