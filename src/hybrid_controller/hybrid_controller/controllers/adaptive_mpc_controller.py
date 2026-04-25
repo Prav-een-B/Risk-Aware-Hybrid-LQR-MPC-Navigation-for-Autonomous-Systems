@@ -167,7 +167,17 @@ class AdaptiveMPCController:
         B_d = self.dt * B_c
         
         try:
-            P = solve_discrete_are(A_d, B_d, self.Q, self.R)
+            if not hasattr(self, '_dare_cache'):
+                self._dare_cache = {}
+            # Quantize theta values slightly to maximize cache hits
+            cache_key = (round(v_s, 3), round(omega_s, 3))
+            
+            if cache_key in self._dare_cache:
+                P = self._dare_cache[cache_key]
+            else:
+                P = solve_discrete_are(A_d, B_d, self.Q, self.R)
+                self._dare_cache[cache_key] = P
+                
             K = np.linalg.solve(self.R + B_d.T @ P @ B_d, B_d.T @ P @ A_d)
         except Exception:
             K = np.array([[1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
@@ -274,8 +284,8 @@ class AdaptiveMPCController:
         nlp = {'x': vars_vec, 'f': cost, 'g': g, 'p': p}
         opts = {
             'ipopt.print_level': 0, 'ipopt.sb': 'yes', 'print_time': 0,
-            'ipopt.max_iter': 300, 'ipopt.warm_start_init_point': 'yes',
-            'ipopt.tol': 1e-4, 'ipopt.acceptable_tol': 1e-3, 'ipopt.acceptable_iter': 5,
+            'ipopt.max_iter': 100, 'ipopt.warm_start_init_point': 'yes',
+            'ipopt.tol': 1e-3, 'ipopt.acceptable_tol': 5e-3, 'ipopt.acceptable_iter': 3,
             'ipopt.linear_solver': 'mumps'
         }
         self._solver = ca.nlpsol('adaptive_mpc', 'ipopt', nlp, opts)
@@ -283,6 +293,8 @@ class AdaptiveMPCController:
         self._ub_con = ub_g
         self._n_vars = vars_vec.shape[0]
         self._warm_start = np.zeros(self._n_vars)
+        self._warm_start_lam_x = None
+        self._warm_start_lam_g = None
         
     def solve(self, x0: np.ndarray, y_target: np.ndarray,
               obstacles: List[Obstacle] = None,
@@ -361,7 +373,11 @@ def pos_solve(self, x0, obstacles, x_refs, u_refs, y_target=None):
     ])
     
     try:
-        sol = self._solver(x0=self._warm_start, p=p_val, lbg=self._lb_con, ubg=self._ub_con)
+        kwargs = {'x0': self._warm_start, 'p': p_val, 'lbg': self._lb_con, 'ubg': self._ub_con}
+        if getattr(self, '_warm_start_lam_x', None) is not None:
+            kwargs['lam_x0'] = self._warm_start_lam_x
+            kwargs['lam_g0'] = self._warm_start_lam_g
+        sol = self._solver(**kwargs)
         sol_x = np.array(sol['x']).flatten()
         solver_stats = self._solver.stats()
         success = solver_stats.get('success', False) or solver_stats.get('return_status', '') == 'Solve_Succeeded'
@@ -388,6 +404,9 @@ def pos_solve(self, x0, obstacles, x_refs, u_refs, y_target=None):
     
     slack_used = np.any(np.abs(Xi_sol) > 1e-6)
     self._warm_start = sol_x.copy()
+    if 'lam_x' in sol and 'lam_g' in sol:
+        self._warm_start_lam_x = np.array(sol['lam_x']).flatten()
+        self._warm_start_lam_g = np.array(sol['lam_g']).flatten()
     
     u_opt = np.clip(U_sol[:, 0], self.u_min, self.u_max)
     

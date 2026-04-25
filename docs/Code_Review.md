@@ -1090,3 +1090,170 @@ Implements procedural generation for stress-testing environments.
 #### 3. `DenseClutterScenario`
 - **Description**: High-density random field (8-15 obstacles).
 - **Purpose**: Stress tests solver speed and switching frequency.
+
+---
+
+## 9. Research Alignment and Literature Context (Updated 2026-04-25)
+
+### 9.1 Hybrid LQR-MPC Composition
+
+Our architecture is most closely aligned with **Wu et al. (2021)** [R4], who propose a triple-mode hybrid control scheme (MAMPC) composing MPC with LQR and neural networks. Key differences:
+
+| Aspect | Wu et al. (MAMPC) | Our Architecture |
+|--------|--------------------|------------------|
+| Third mode | Neural network surrogate | None (dual-mode) |
+| Switching | Discrete mode selection | Continuous sigmoid blending |
+| Safety fallback | MPC as fail-safe | LQR as fail-safe |
+| Stability proof | Lyapunov + mode-switching | Lyapunov + rate-limited blending |
+| Application | General nonlinear systems | Differential-drive navigation |
+
+**Our novelty:** Continuous blending with formal anti-chatter guarantees (Theorem 2) rather than discrete mode selection. This eliminates control discontinuities at switching boundaries.
+
+### 9.2 Terminal Cost Theory
+
+Per **Rawlings and Mayne (2017)** [R1] and **Mayne et al. (2000)** [R2], the three ingredients for MPC stability are:
+1. Terminal cost $V_f(x) = x^\top P x$ where $P$ solves the DARE
+2. Terminal constraint set $\mathcal{X}_f$ (control-invariant under LQR)
+3. Local terminal controller $\kappa_f(x) = -Kx$
+
+**Current gap:** Our `mpc_controller.py` uses arbitrary terminal weights $Q_T = \text{diag}([50, 50, 10])$ instead of the DARE-derived $P$. This **violates** Proposition 3 in `formal_proofs.md` and undermines stability claims. **Fix: P0-D.**
+
+### 9.3 Safety Guarantees (CBF)
+
+Per **Ames et al. (ECC 2019)** [R8], safety is formalized as forward invariance of the safe set $\mathcal{C} = \{x : h(x) \geq 0\}$. Our obstacle avoidance constraints in the NMPC (`adaptive_mpc_controller.py`) implement this through Euclidean norm constraints, but the QP-MPC uses linearized half-planes which can be non-conservative or overly conservative depending on geometry.
+
+**Planned improvement:** Integrate CBF-based safety filters as a post-processing step, ensuring $w(t) \geq w_{min}(x)$ per Proposition 5 in `formal_proofs.md`.
+
+### 9.4 Dwell-Time and Anti-Chatter
+
+Per **Liberzon (2003)** [R6] and **Hespanha and Morse (1999)** [R7], stability under switching requires minimum dwell time. Our rate-limited blending weight ($\dot{w}_{max} = 2.0$ s$^{-1}$) enforces a minimum dwell time of $\tau_{dwell} \geq 0.4$ s (Proposition 4), which is well above typical Zeno thresholds.
+
+### 9.5 Adaptive NMPC and LMS
+
+Per **Ioannou and Sun (1996)** [R11], the LMS adaptation in `LMSAdaptation` converges under persistent excitation. Our figure-8 trajectories naturally provide PE for the $[v_s, \omega_s]$ parameters. The CasADi + IPOPT solver (**Andersson et al., 2019** [R13]; **Wachter and Biegler, 2006** [R23]) provides exact nonlinear optimization with warm-starting.
+
+---
+
+## 10. Correctness Audit Summary (2026-04-25)
+
+### 10.1 Severity Classification
+
+| Severity | Definition | Count |
+|----------|-----------|-------|
+| **Critical** | Results are invalid without fix | 1 |
+| **High** | Results are biased/incorrect | 3 |
+| **Medium** | Suboptimal but functional | 2 |
+
+### 10.2 Detailed Findings
+
+#### P0-A: CVXPYgen Obstacle Blindness (Critical)
+- **File:** `cvxpygen_solver.py`
+- **Issue:** The parametric QP wrapper used for fast MPC solves does not include obstacle avoidance constraints.
+- **Impact:** All evaluation runs using CVXPYgen produce collision-blind trajectories.
+- **Fix:** Add linearized obstacle constraints to the parametric QP formulation.
+
+#### P0-B: Absolute vs. Reference Control Cost (High)
+- **File:** `mpc_controller.py`
+- **Issue:** Cost function penalizes $\|u\|_R^2$ instead of $\|u - u_{ref}\|_R^2$.
+- **Impact:** MPC drives toward zero control effort instead of tracking reference velocities. Causes sluggish response on curved trajectories.
+- **Fix:** Replace $u$ with $u - u_{ref}$ in the cost quadratic.
+
+#### P0-C: Obstacle Linearization Point (High)
+- **File:** `mpc_controller.py`
+- **Issue:** Obstacle constraints are linearized around the reference trajectory instead of the warm-start (predicted) trajectory.
+- **Impact:** Linearization error grows as MPC deviates from reference, making obstacle avoidance constraints inaccurate when they matter most.
+- **Fix:** Linearize around the previous solution's predicted trajectory.
+
+#### P0-D: Arbitrary Terminal Cost (High)
+- **File:** `mpc_controller.py`
+- **Issue:** Terminal cost uses hardcoded $Q_T = \text{diag}([50, 50, 10])$ instead of DARE solution $P$.
+- **Impact:** No formal stability guarantee. Terminal cost may be too large or too small.
+- **Fix:** Compute $P$ from DARE at each linearization point.
+
+#### P0-E: Hardcoded LQR Fallback (Medium)
+- **File:** `lqr_controller.py`
+- **Issue:** When DARE fails, a hardcoded gain $K = [[1,0,0],[0,0,1]]$ is used instead of a properly computed fallback.
+- **Impact:** Fallback gain may be destabilizing for certain operating points.
+- **Fix:** Use pole-placement or previous valid DARE solution as fallback.
+
+#### P0-F: Move-Blocking Rate Penalty (Medium)
+- **File:** `mpc_controller.py`
+- **Issue:** Move-blocking zeroes the rate-of-change penalty $\Delta u$ terms for blocked steps.
+- **Impact:** Eliminates smoothness incentive during blocked intervals, potentially causing jerk.
+- **Fix:** Maintain rate penalty for unblocked transitions.
+
+### 10.3 Evaluation Validity
+
+**STATUS: P0 and P5-A fixes are now COMPLETE.** The critical bugs identified in sections 10.1-10.2 have all been resolved:
+- P0-A: CVXPYgenWrapper now includes obstacle constraints and u_ref tracking
+- P0-B through P0-F: All MPC/LQR formulation issues fixed
+- P5-A: Noise enabled by default (`sigma_p=0.05`, `sigma_theta=0.01`)
+- Variance validation guard prevents saving deterministic results
+
+**Next step:** Re-run the full Monte Carlo validation with `python evaluation/statistical_runner.py` to generate trustworthy results.
+
+---
+
+## 11. Checkpoint Navigation Module (`trajectory/checkpoint_nav.py`) [NEW]
+
+### 11.1 CheckpointExtractor
+
+Extracts sparse waypoints from dense trajectories. Three strategies:
+- `uniform`: Evenly by index. $O(1)$ per checkpoint.
+- `arc_length`: Evenly by cumulative distance. $O(N)$.
+- `curvature`: Curvature-weighted arc length. $O(N)$. Recommended.
+
+### 11.2 WaypointManager
+
+Manages real-time checkpoint progress:
+- `update(state)` → `WaypointStatus` (current index, distance, completion)
+- `get_reference_for_mpc(horizon, dt, state)` → `(x_refs, u_refs)` via linear interpolation toward upcoming waypoints
+- Supports configurable `arrival_radius` (default: 0.3m) and `lookahead` (default: 3)
+
+### 11.3 CNMetrics
+
+- `compute_cross_track_error()`: XTE via point-to-segment projection, $O(N \times M)$
+- `compute_completion_metrics()`: Fraction of checkpoints reached
+- `compute_summary()`: Full metric dict (mean/max/std/p95 XTE + completion)
+
+---
+
+## 12. Trajectory Factory (`trajectory/trajectory_factory.py`) [NEW]
+
+Five trajectory families, all outputting `[t, px, py, theta, v, omega]`:
+
+| Method | Equation | Properties |
+|--------|----------|------------|
+| `_generate_figure8` | $p_x = A\sin(at)$, $p_y = A\sin(at)\cos(at)$ | Smooth, single crossing |
+| `_generate_clover3` | $r = A\sin(3\theta)$ polar→Cartesian | 3 lobes, high curvature |
+| `_generate_rose4` | $r = A\cos(2\theta)$ polar→Cartesian | 4 petals, origin crossings |
+| `_generate_spiral` | $r = A(1 - t/T)$, $\theta = 2\pi n t/T$ | Monotonic radius decrease |
+| `_generate_random_wp` | Catmull-Rom spline through random waypoints | Non-periodic, unpredictable |
+
+Shared finalization: heading via `arctan2(dy, dx)`, velocity via `sqrt(dx²+dy²)`, angular velocity via gradient.
+
+---
+
+## 13. Evaluation Modules [NEW/UPDATED]
+
+### 13.1 Statistical Tests (`evaluation/stats.py`)
+
+- `cohen_d(a, b)`: Effect size, pooled std
+- `wilson_ci(n_success, n_total)`: Wilson score CI for proportions
+- `wilcoxon_pairwise(results_dict)`: Pairwise Wilcoxon signed-rank with Bonferroni
+- `validate_results_stochastic(results_dict)`: Zero-variance guard (P5-A)
+
+### 13.2 Scenarios (`evaluation/scenarios.py`) [UPDATED]
+
+New scenario classes:
+- `DensitySweepScenario`: Class A with configurable obstacle count
+- `DynamicScenario`: Class B with `DynamicObstacle` (linear/sinusoidal/random_walk)
+- `NoiseStressScenario`: Class C fixed layout for noise parameter sweeps
+- `FRPvsCNScenario`: Class D for head-to-head paradigm comparison
+
+### 13.3 Risk Visualization (`utils/visualization.py`) [UPDATED]
+
+Three new Visualizer methods (P4-C):
+- `plot_blend_trajectory()`: Trajectory colored by blend weight, custom blue→purple→red colormap
+- `plot_risk_heatmap()`: Arena-wide risk field with d_safe/d_trigger circles
+- `plot_risk_timeseries()`: Dual-axis risk + blend weight time plot

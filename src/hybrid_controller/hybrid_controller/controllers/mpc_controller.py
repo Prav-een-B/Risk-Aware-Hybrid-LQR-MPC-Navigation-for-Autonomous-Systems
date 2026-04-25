@@ -6,7 +6,7 @@ Implements the Model Predictive Controller with obstacle avoidance using
 CVXPY for easy constraint modeling and rapid prototyping.
 
 MPC Problem Formulation:
-    min  Σ_{k=0}^{N-1} (||x_k - x_ref||²_Q + ||u_k||²_R) + ||x_N - x_ref||²_P
+     min  Σ_{k=0}^{N-1} (||x_k - x_ref||²_Q + ||u_k - u_ref||²_R) + ||x_N - x_ref||²_P
     s.t. x_{k+1} = A_d·x_k + B_d·u_k           (dynamics)
          |v_k| ≤ v_max, |ω_k| ≤ ω_max         (actuator limits)
          ||p_k - p_obs|| ≥ d_safe              (obstacle avoidance)
@@ -26,6 +26,7 @@ import cvxpy as cp
 from typing import Tuple, Optional, List, Dict, Any
 from dataclasses import dataclass
 import time
+from scipy.linalg import solve_discrete_are
 
 from ..models.linearization import Linearizer
 
@@ -137,14 +138,11 @@ class MPCController:
             Q_diag = [10.0, 10.0, 50.0]  # Strong heading weight for stability
         if R_diag is None:
             R_diag = [0.1, 0.1]
-        if P_diag is None:
-            P_diag = [20.0, 20.0, 40.0]  # Strong terminal heading weight
         if S_diag is None:
             S_diag = [0.1, 0.5]  # Δu penalty: [Δv, Δω] (moderate smoothing)
         
         self.Q = np.diag(Q_diag)
         self.R = np.diag(R_diag)
-        self.P = np.diag(P_diag)
         self.S = np.diag(S_diag)  # Control rate penalty (1st-order)
         
         # Second-order jerk penalty (optional)
@@ -153,8 +151,18 @@ class MPCController:
         else:
             self.J = None  # Disabled by default
         
-        # Linearizer
+        # Linearizer (must be created before DARE terminal cost computation)
         self.linearizer = Linearizer(dt=dt)
+        
+        # P0-D: Compute DARE-derived terminal cost instead of arbitrary diagonal.
+        # Solves the DARE at a nominal operating point to get P_terminal that
+        # satisfies the Lyapunov decrease condition for MPC stability.
+        # Reference: Rawlings & Mayne (2017), Proposition 3 in formal_proofs.md
+        if P_diag is not None:
+            # User explicitly provided terminal weights -- respect them
+            self.P = np.diag(P_diag)
+        else:
+            self.P = self._compute_dare_terminal_cost()
         
         # Warm-start storage
         self._prev_solution: Optional[np.ndarray] = None
@@ -167,6 +175,44 @@ class MPCController:
         # State and control dimensions
         self.nx = 3  # [px, py, theta]
         self.nu = 2  # [v, omega]
+    
+    def _compute_dare_terminal_cost(self) -> np.ndarray:
+        """
+        Compute DARE-derived terminal cost matrix P.
+        
+        P0-D: Solves the Discrete Algebraic Riccati Equation at a nominal
+        operating point (v=0.3, theta=0) to obtain a terminal cost matrix
+        that satisfies the Lyapunov decrease condition:
+        
+            V_f((A-BK)x) - V_f(x) + l(x, -Kx) = 0
+        
+        This is the standard recipe from Rawlings & Mayne for MPC stability.
+        
+        Returns:
+            P: Terminal cost matrix (3x3), positive definite.
+        """
+        # Nominal operating point for terminal cost computation
+        v_nom = 0.3   # nominal speed (m/s)
+        theta_nom = 0.0
+        
+        try:
+            A_nom, B_nom = self.linearizer.get_discrete_model_explicit(v_nom, theta_nom)
+            P_dare = solve_discrete_are(A_nom, B_nom, self.Q, self.R)
+            
+            # Verify P is positive definite (it should be by DARE theory)
+            eigvals = np.linalg.eigvalsh(P_dare)
+            if np.all(eigvals > 0):
+                return P_dare
+            else:
+                print(f"Warning: DARE terminal cost has non-positive eigenvalues: {eigvals}. "
+                      f"Using 10*Q fallback.")
+                return 10.0 * self.Q
+                
+        except Exception as e:
+            # Fallback: 10*Q is a conservative but stable choice
+            print(f"Warning: DARE terminal cost computation failed: {e}. "
+                  f"Using 10*Q fallback.")
+            return 10.0 * self.Q
     
     def solve(self, x0: np.ndarray, x_refs: np.ndarray, u_refs: np.ndarray,
               obstacles: List[Obstacle] = None, 
@@ -223,11 +269,13 @@ class MPCController:
         # Objective function
         cost = 0
         
-        # Stage costs: Σ (||x_k - x_ref||²_Q + ||u_k||²_R + ||u_k - u_{k-1}||²_S)
+        # Stage costs: Σ (||x_k - x_ref||²_Q + ||u_k - u_ref_k||²_R + ||u_k - u_{k-1}||²_S)
+        # P0-B fix: Track u_ref instead of penalizing absolute control magnitude
         for k in range(self.N):
             state_error = x[k] - x_refs[k]
             cost += cp.quad_form(state_error, self.Q)
-            cost += cp.quad_form(u[k], self.R)
+            control_error = u[k] - u_refs[k]
+            cost += cp.quad_form(control_error, self.R)
             # Control rate penalty (Δu) for smoother trajectories (1st-order)
             if k > 0:
                 du_rate = u[k] - u[k - 1]
@@ -273,9 +321,16 @@ class MPCController:
                 # (p_k - p_obs)·n ≥ d_safe + r_obs
                 # where n is the unit normal from obstacle to current position
                 
-                # Use reference position for linearization point
-                px_lin = x_refs[k, 0]
-                py_lin = x_refs[k, 1]
+                # P0-C fix: Use warm-start (previous predicted) trajectory
+                # for linearization instead of reference trajectory.
+                # This produces much better constraint normals when the
+                # robot has already deviated from the reference.
+                if self._prev_states is not None and k < len(self._prev_states):
+                    px_lin = self._prev_states[k, 0]
+                    py_lin = self._prev_states[k, 1]
+                else:
+                    px_lin = x_refs[k, 0]
+                    py_lin = x_refs[k, 1]
                 
                 # Direction from obstacle to linearization point
                 dx = px_lin - obs.x
@@ -444,12 +499,13 @@ class MPCController:
             # Penalize state error (dx) with possibly adaptive Q
             cost += cp.quad_form(dx[k], Q_active)
             
-            # Penalize total control effort (u = u_ref + du)
-            u_k = u_refs[k] + du_expanded[k]
-            cost += cp.quad_form(u_k, self.R)
+            # P0-B fix: Penalize control DEVIATION from reference, not absolute control
+            cost += cp.quad_form(du_expanded[k], self.R)
             
-            # Control rate penalty (Δu) for smoother trajectories (1st-order)
-            if k > 0:
+            # P0-F fix: Apply rate penalty only at move-block boundaries.
+            # Within a block, du_expanded[k] == du_expanded[k-1] by construction,
+            # so the rate penalty is identically zero and wastes computation.
+            if k > 0 and (k % self.block_size == 0):
                 du_rate = du_expanded[k] - du_expanded[k - 1]
                 cost += cp.quad_form(du_rate, self.S)
             # Second-order jerk penalty: ||du_k - 2*du_{k-1} + du_{k-2}||^2_J
@@ -491,9 +547,13 @@ class MPCController:
         slack_idx = 0
         for obs in obstacles:
             for k in range(self.N):
-                # Current linearization point
-                px_lin = x_refs_unwrapped[k, 0]
-                py_lin = x_refs_unwrapped[k, 1]
+                # P0-C fix: Use warm-start trajectory for linearization
+                if self._prev_states is not None and k < len(self._prev_states):
+                    px_lin = self._prev_states[k, 0]
+                    py_lin = self._prev_states[k, 1]
+                else:
+                    px_lin = x_refs_unwrapped[k, 0]
+                    py_lin = x_refs_unwrapped[k, 1]
                 
                 dx_obs = px_lin - obs.x
                 dy_obs = py_lin - obs.y

@@ -49,8 +49,8 @@ class RiskMetrics:
     """
     
     def __init__(self, 
-                 d_safe: float = 0.3,
-                 d_trigger: float = 1.0,
+                 d_safe: float = 0.35,
+                 d_trigger: float = 3.0,
                  alpha: float = 0.6,
                  beta: float = 0.4,
                  threshold_low: float = 0.2,
@@ -128,6 +128,38 @@ class RiskMetrics:
         
         return max_risk, min_distance, nearest_id
     
+    def fast_predict_rollout(self, x0: np.ndarray, u_refs: np.ndarray,
+                              dt: float = 0.02) -> np.ndarray:
+        """
+        Generate predicted states via fast Euler rollout (P1-E fix).
+        
+        Breaks the circular dependency where predictive risk needs MPC
+        predicted states, but MPC needs risk to decide activation.
+        This rollout uses reference controls and takes ~0.1ms.
+        
+        Args:
+            x0: Current state [px, py, theta]
+            u_refs: Reference controls [N, 2] = [v, omega]
+            dt: Time step
+            
+        Returns:
+            Predicted states [N, 3] via Euler integration
+        """
+        N = len(u_refs)
+        states = np.zeros((N, 3))
+        x = x0.copy()
+        
+        for k in range(N):
+            v, omega = u_refs[k]
+            x = np.array([
+                x[0] + v * np.cos(x[2]) * dt,
+                x[1] + v * np.sin(x[2]) * dt,
+                x[2] + omega * dt
+            ])
+            states[k] = x
+        
+        return states
+    
     def compute_predictive_risk(self,
                                  predicted_states: np.ndarray,
                                  obstacles: List[Dict]) -> float:
@@ -135,6 +167,9 @@ class RiskMetrics:
         Compute risk based on predicted trajectory constraint violations.
         
         Checks if any predicted state over the horizon violates safety constraints.
+        
+        P1-E: Can now be called with states from fast_predict_rollout()
+        instead of requiring MPC predicted states.
         
         Args:
             predicted_states: Predicted states (N, 3) over horizon

@@ -51,4 +51,5 @@ docs/*.pdf
 
 # Jupyter / IPython
 .ipynb_checkpoints/
-
+To_do.md
+WORKPLAN_PHASE_2.md
