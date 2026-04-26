@@ -26,13 +26,13 @@ class ObstaclePublisherNode(Node):
         qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
         self.pub = self.create_publisher(Float32MultiArray, '/obstacles', qos)
 
-        # Obstacle positions matching the Gazebo world
-        # Scaled for figure-8 with A=0.5m: x in [-0.5, 0.5], y in [-0.25, 0.25]
-        # Format: [x, y, radius] for each obstacle
+        # Obstacles NEAR but NOT ON the figure-8 path
+        # Figure-8: x in [-0.5, 0.5], y in [-0.25, 0.25]
+        # Placed ~0.15-0.25m off the path to trigger avoidance without blocking
         self.obstacles = [
-            [0.35,  0.15,  0.10],   # Right loop of figure-8
-            [-0.25, -0.15, 0.10],   # Left loop of figure-8
-            [0.45,  -0.10, 0.08],   # Near crossing point
+            [0.30,  0.35,  0.10],   # Above right loop
+            [-0.35, -0.35, 0.10],   # Below left loop
+            [0.55,  0.00,  0.08],   # Right of crossing
         ]
 
         self.timer = self.create_timer(1.0 / publish_rate, self.publish_obstacles)

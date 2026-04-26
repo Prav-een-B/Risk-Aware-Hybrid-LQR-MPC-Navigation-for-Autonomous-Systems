@@ -81,7 +81,7 @@ class HybridControllerNode(Node):
             )
             self.blender = BlendingSupervisor(dt=self.dt)
             self.risk_calc = RiskMetrics(
-                d_trigger=1.5, d_safe=self.get_parameter('d_safe').value
+                d_trigger=0.6, d_safe=self.get_parameter('d_safe').value
             )
             self.Obstacle = Obstacle
             self.controllers_ok = True
