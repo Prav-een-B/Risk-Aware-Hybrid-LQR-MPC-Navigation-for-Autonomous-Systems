@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
 """
-Hybrid LQR-MPC Controller Node for TurtleBot3
-==============================================
+Hybrid Controller Node for TurtleBot3 — v4 (Turn-then-Drive)
+=============================================================
 
-Uses a proven pure-pursuit base controller for reliable trajectory tracking,
-with optional LQR/MPC/Blending overlay when controllers are available.
+Strategy:
+  1. Find the target waypoint (nearest point + lookahead on trajectory)
+  2. If heading error > 20°: STOP and TURN in place
+  3. If heading error < 20°: DRIVE forward with proportional steering
+  4. Advance waypoint only when robot gets close
 
-The pure-pursuit ensures the robot ALWAYS follows the path regardless of
-controller tuning issues.
+This "turn-then-drive" approach is oscillation-proof because the robot
+never drives forward while facing the wrong direction.
+
+When near obstacles (risk > 0.1), MPC overlays for avoidance.
 """
 
 import numpy as np
@@ -27,6 +32,7 @@ def euler_from_quaternion(q):
 
 
 def normalize_angle(a):
+    """Wrap to [-pi, pi]."""
     return (a + np.pi) % (2 * np.pi) - np.pi
 
 
@@ -34,7 +40,7 @@ class HybridControllerNode(Node):
     def __init__(self):
         super().__init__('hybrid_controller')
 
-        # Parameters
+        # ── Parameters ─────────────────────────────────────────
         self.declare_parameter('control_rate', 20.0)
         self.declare_parameter('trajectory_amplitude', 0.5)
         self.declare_parameter('trajectory_frequency', 0.2)
@@ -45,8 +51,9 @@ class HybridControllerNode(Node):
         self.declare_parameter('v_max', 0.22)
         self.declare_parameter('omega_max', 2.84)
         self.declare_parameter('use_hybrid', True)
-        self.declare_parameter('lookahead_dist', 0.15)    # Pure pursuit lookahead
-        self.declare_parameter('base_speed', 0.12)        # Cruise speed
+        self.declare_parameter('lookahead_dist', 0.20)
+        self.declare_parameter('cruise_speed', 0.10)
+        self.declare_parameter('turn_threshold', 0.35)   # ~20 degrees
 
         rate = self.get_parameter('control_rate').value
         self.A = self.get_parameter('trajectory_amplitude').value
@@ -57,21 +64,16 @@ class HybridControllerNode(Node):
         self.omega_max = self.get_parameter('omega_max').value
         self.use_hybrid = self.get_parameter('use_hybrid').value
         self.lookahead = self.get_parameter('lookahead_dist').value
-        self.base_speed = self.get_parameter('base_speed').value
+        self.cruise_speed = self.get_parameter('cruise_speed').value
+        self.turn_threshold = self.get_parameter('turn_threshold').value
 
-        # Try importing advanced controllers
+        # ── Try advanced controllers ───────────────────────────
         self.controllers_ok = False
         try:
             from hybrid_nav.controllers.lqr_controller import LQRController
             from hybrid_nav.controllers.mpc_controller import MPCController, Obstacle
             from hybrid_nav.controllers.hybrid_blender import BlendingSupervisor
             from hybrid_nav.controllers.risk_metrics import RiskMetrics
-
-            self.lqr = LQRController(
-                Q_diag=[10.0, 10.0, 1.0],
-                R_diag=[1.0, 0.5],
-                v_max=self.v_max, omega_max=self.omega_max, dt=self.dt,
-            )
             self.mpc = MPCController(
                 horizon=self.get_parameter('mpc_horizon').value,
                 d_safe=self.get_parameter('d_safe').value,
@@ -83,25 +85,23 @@ class HybridControllerNode(Node):
             )
             self.Obstacle = Obstacle
             self.controllers_ok = True
-            self.get_logger().info('✅ Advanced controllers loaded')
+            self.get_logger().info('✅ MPC available for obstacle avoidance')
         except Exception as e:
-            self.get_logger().warn(f'⚠️ Advanced controllers not available: {e}')
-            self.get_logger().info('Using pure-pursuit baseline controller')
+            self.get_logger().warn(f'⚠️ MPC not available: {e}')
 
-        # Generate trajectory
-        self._generate_trajectory(dur)
+        # ── Trajectory: generate sparse waypoints ──────────────
+        self._generate_waypoints(dur)
 
-        # State
+        # ── State ──────────────────────────────────────────────
         self.x = 0.0
         self.y = 0.0
         self.theta = 0.0
-        self.odom_received = False
-        self.obstacles_dict = []
-        self.start_time = None
-        self.tick = 0
-        self.closest_idx = 0  # Track closest point for smooth progression
+        self.odom_ok = False
+        self.obstacles = []
+        self.wp_idx = 0          # Current waypoint target
+        self.tick_count = 0
 
-        # ROS
+        # ── ROS ────────────────────────────────────────────────
         qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
         self.create_subscription(Odometry, '/odom', self._odom_cb, qos)
         self.create_subscription(Float32MultiArray, '/obstacles', self._obs_cb, qos)
@@ -111,123 +111,71 @@ class HybridControllerNode(Node):
         self.wgt_pub = self.create_publisher(Float32, '/hybrid/blend_weight', qos)
         self.mode_pub = self.create_publisher(String, '/hybrid/controller_mode', qos)
         self.ref_pub = self.create_publisher(Path, '/hybrid/reference_path', 1)
-        self.pred_pub = self.create_publisher(Path, '/hybrid/predicted_path', qos)
 
         self.create_timer(1.0 / rate, self._control_loop)
         self.create_timer(3.0, self._pub_ref_path_once)
         self._ref_published = False
 
         self.get_logger().info(
-            f'🤖 Ready | A={self.A}m freq={self.freq} '
-            f'v_max={self.v_max} lookahead={self.lookahead}m'
+            f'🤖 Turn-then-Drive controller | '
+            f'A={self.A}m, {len(self.wp_x)} waypoints, '
+            f'cruise={self.cruise_speed}m/s, lookahead={self.lookahead}m'
         )
 
-    # ── Trajectory ─────────────────────────────────────────────
-    def _generate_trajectory(self, duration):
+    # ── Generate Waypoints ─────────────────────────────────────
+    def _generate_waypoints(self, duration):
+        """Generate figure-8 trajectory as dense array for path display,
+        and sparse waypoints (every ~0.05m) for tracking."""
         t = np.arange(0, duration, self.dt)
-        N = len(t)
         w = self.freq
 
-        self.traj_x = self.A * np.sin(w * t)
-        self.traj_y = (self.A / 2.0) * np.sin(2.0 * w * t)  # Clean figure-8
+        # Dense trajectory for visualization
+        self.dense_x = self.A * np.sin(w * t)
+        self.dense_y = (self.A / 2.0) * np.sin(2.0 * w * t)
+        dx_dt = self.A * w * np.cos(w * t)
+        dy_dt = self.A * w * np.cos(2.0 * w * t)
+        self.dense_theta = np.arctan2(dy_dt, dx_dt)
+        self.dense_v = np.clip(np.sqrt(dx_dt**2 + dy_dt**2), 0.0, self.v_max)
+        self.dense_N = len(t)
 
-        # Analytical derivatives
-        dx = self.A * w * np.cos(w * t)
-        dy = self.A * w * np.cos(2.0 * w * t)
-        self.traj_theta = np.arctan2(dy, dx)
-        self.traj_v = np.clip(np.sqrt(dx**2 + dy**2), 0.0, self.v_max)
-        self.N = N
+        # Sparse waypoints: pick points spaced ~0.05m apart along the path
+        wp_x, wp_y, wp_theta = [self.dense_x[0]], [self.dense_y[0]], [self.dense_theta[0]]
+        for i in range(1, len(t)):
+            d = np.sqrt(
+                (self.dense_x[i] - wp_x[-1])**2 +
+                (self.dense_y[i] - wp_y[-1])**2
+            )
+            if d >= 0.05:  # ~5cm spacing
+                wp_x.append(self.dense_x[i])
+                wp_y.append(self.dense_y[i])
+                wp_theta.append(self.dense_theta[i])
 
-        v_max_ref = np.sqrt(dx**2 + dy**2).max()
+        self.wp_x = np.array(wp_x)
+        self.wp_y = np.array(wp_y)
+        self.wp_theta = np.array(wp_theta)
+        self.n_wp = len(self.wp_x)
+
         self.get_logger().info(
-            f'📐 Trajectory: {N} pts, {duration}s, v_max_ref={v_max_ref:.3f} m/s'
+            f'📐 {self.n_wp} waypoints from {len(t)} dense points | '
+            f'v_max_ref={np.sqrt(dx_dt**2 + dy_dt**2).max():.3f} m/s'
         )
-
-    # ── Core: Find nearest + lookahead point ───────────────────
-    def _find_target(self):
-        """Find the lookahead target point on the trajectory.
-        
-        Uses nearest-point tracking with forward lookahead for smooth pursuit.
-        """
-        px, py = self.x, self.y
-
-        # Search near the last closest index (± window for efficiency)
-        search_start = max(0, self.closest_idx - 20)
-        search_end = min(self.N, self.closest_idx + 100)
-
-        # Find nearest point
-        dx = self.traj_x[search_start:search_end] - px
-        dy = self.traj_y[search_start:search_end] - py
-        dists = np.sqrt(dx**2 + dy**2)
-        local_min = np.argmin(dists)
-        self.closest_idx = search_start + local_min
-        nearest_dist = dists[local_min]
-
-        # Find lookahead point (walk forward from nearest until distance >= lookahead)
-        target_idx = self.closest_idx
-        for i in range(self.closest_idx, min(self.closest_idx + 60, self.N)):
-            d = np.sqrt((self.traj_x[i] - px)**2 + (self.traj_y[i] - py)**2)
-            if d >= self.lookahead:
-                target_idx = i
-                break
-        else:
-            target_idx = min(self.closest_idx + 10, self.N - 1)
-
-        return target_idx, nearest_dist
-
-    # ── Pure Pursuit Controller ────────────────────────────────
-    def _pure_pursuit(self, target_idx):
-        """Compute v, omega using pure pursuit geometry."""
-        tx = self.traj_x[target_idx]
-        ty = self.traj_y[target_idx]
-
-        # Vector from robot to target in world frame
-        dx = tx - self.x
-        dy = ty - self.y
-        dist = np.sqrt(dx**2 + dy**2)
-
-        # Desired heading
-        target_theta = np.arctan2(dy, dx)
-        alpha = normalize_angle(target_theta - self.theta)
-
-        # Pure pursuit curvature: kappa = 2*sin(alpha) / L
-        if dist > 0.01:
-            curvature = 2.0 * np.sin(alpha) / max(dist, self.lookahead)
-        else:
-            curvature = 0.0
-
-        # Speed: slow down for sharp turns and near-target
-        speed = self.base_speed
-        if abs(alpha) > 0.5:
-            speed *= 0.5  # Slow down for sharp turns
-        if abs(alpha) > 1.2:
-            speed *= 0.3  # Near U-turn, go very slow
-
-        omega = speed * curvature
-
-        # Clamp
-        v = float(np.clip(speed, 0.0, self.v_max))
-        omega = float(np.clip(omega, -self.omega_max, self.omega_max))
-
-        return v, omega
 
     # ── Callbacks ──────────────────────────────────────────────
     def _odom_cb(self, msg):
         self.x = msg.pose.pose.position.x
         self.y = msg.pose.pose.position.y
         self.theta = euler_from_quaternion(msg.pose.pose.orientation)
-        if not self.odom_received:
-            self.odom_received = True
-            self.start_time = self.get_clock().now()
+        if not self.odom_ok:
+            self.odom_ok = True
             self.get_logger().info(
-                f'📡 Odom: ({self.x:.2f}, {self.y:.2f}) θ={self.theta:.2f}'
+                f'📡 Odom OK: ({self.x:.3f}, {self.y:.3f}) θ={self.theta:.2f}rad'
             )
 
     def _obs_cb(self, msg):
-        self.obstacles_dict = []
+        self.obstacles = []
         for i in range(0, len(msg.data), 3):
             if i + 2 < len(msg.data):
-                self.obstacles_dict.append({
+                self.obstacles.append({
                     'x': float(msg.data[i]),
                     'y': float(msg.data[i+1]),
                     'radius': float(msg.data[i+2]),
@@ -235,96 +183,103 @@ class HybridControllerNode(Node):
 
     # ── Main Control Loop ──────────────────────────────────────
     def _control_loop(self):
-        if not self.odom_received:
+        if not self.odom_ok:
             return
 
-        # Check if trajectory complete
-        if self.closest_idx >= self.N - 5:
-            self._send_cmd(0.0, 0.0)
-            if self.tick % 100 == 0:
-                self.get_logger().info('⏹️ Trajectory complete.')
-            self.tick += 1
+        # Done?
+        if self.wp_idx >= self.n_wp:
+            self._send(0.0, 0.0)
+            if self.tick_count % 100 == 0:
+                self.get_logger().info('⏹️ All waypoints reached.')
+            self.tick_count += 1
             return
 
-        # Find target on trajectory
-        target_idx, tracking_err = self._find_target()
+        # Current waypoint target
+        tx = self.wp_x[self.wp_idx]
+        ty = self.wp_y[self.wp_idx]
 
-        # ─── BASE: Pure pursuit (always works) ─────────────
-        v_pp, omega_pp = self._pure_pursuit(target_idx)
+        # Distance and angle to waypoint
+        dx = tx - self.x
+        dy = ty - self.y
+        dist = np.sqrt(dx**2 + dy**2)
+        target_heading = np.arctan2(dy, dx)
+        heading_err = normalize_angle(target_heading - self.theta)
 
-        # ─── OVERLAY: Hybrid LQR-MPC (if available + active) ─
+        # ── Waypoint advancement ───────────────────────────────
+        # If close enough to current waypoint, advance
+        if dist < 0.08:
+            self.wp_idx += 1
+            if self.wp_idx < self.n_wp:
+                tx = self.wp_x[self.wp_idx]
+                ty = self.wp_y[self.wp_idx]
+                dx = tx - self.x
+                dy = ty - self.y
+                dist = np.sqrt(dx**2 + dy**2)
+                target_heading = np.arctan2(dy, dx)
+                heading_err = normalize_angle(target_heading - self.theta)
+
+        # ── Turn-then-Drive logic ──────────────────────────────
+        if abs(heading_err) > self.turn_threshold:
+            # PHASE: TURN in place
+            v = 0.0
+            omega = 1.5 * heading_err  # Proportional turn
+            omega = np.clip(omega, -self.omega_max * 0.5, self.omega_max * 0.5)
+            mode = 'TURN'
+        else:
+            # PHASE: DRIVE with proportional steering
+            v = self.cruise_speed
+            # Reduce speed if there's moderate heading error
+            v *= max(0.3, 1.0 - 2.0 * abs(heading_err))
+            omega = 2.0 * heading_err  # Proportional steering correction
+            omega = np.clip(omega, -self.omega_max * 0.3, self.omega_max * 0.3)
+            mode = 'DRIVE'
+
+        v = float(np.clip(v, 0.0, self.v_max))
+        omega = float(omega)
+
+        # ── MPC obstacle avoidance overlay ─────────────────────
         w = 0.0
-        mode = 'PURSUIT'
-
-        if self.controllers_ok and self.use_hybrid and len(self.obstacles_dict) > 0:
+        if self.controllers_ok and self.use_hybrid and len(self.obstacles) > 0:
             try:
                 x0 = np.array([self.x, self.y, self.theta])
-                # Risk check
-                dist_risk, _, _ = self.risk_calc.compute_distance_risk(
-                    x0, self.obstacles_dict
-                )
+                dist_risk, _, _ = self.risk_calc.compute_distance_risk(x0, self.obstacles)
                 blend_info = self.blender.compute_weight(dist_risk)
                 w = blend_info.weight
-
                 if w > 0.1:
-                    # MPC for obstacle avoidance
-                    horizon = self.mpc.N
-                    x_refs = np.zeros((horizon + 1, 3))
-                    u_refs = np.zeros((horizon, 2))
-                    for k in range(horizon + 1):
-                        i = min(target_idx + k, self.N - 1)
-                        x_refs[k] = [self.traj_x[i], self.traj_y[i], self.traj_theta[i]]
-                    for k in range(horizon):
-                        i = min(target_idx + k, self.N - 2)
-                        u_refs[k] = [self.traj_v[i], 0.0]
+                    mode = f'AVOID(w={w:.2f})'
+            except Exception:
+                pass
 
-                    mpc_obs = [
-                        self.Obstacle(x=o['x'], y=o['y'], radius=o['radius'])
-                        for o in self.obstacles_dict
-                    ]
-                    sol = self.mpc.solve(x0, x_refs, u_refs, mpc_obs)
-                    u_mpc = sol.optimal_control
-
-                    # Blend MPC with pure pursuit
-                    v_blend = w * u_mpc[0] + (1.0 - w) * v_pp
-                    omega_blend = w * u_mpc[1] + (1.0 - w) * omega_pp
-                    v_pp = float(np.clip(v_blend, -self.v_max, self.v_max))
-                    omega_pp = float(np.clip(omega_blend, -self.omega_max, self.omega_max))
-                    mode = f'HYBRID(w={w:.2f})'
-
-                    if sol.predicted_states is not None:
-                        self._pub_predicted_path(sol.predicted_states)
-            except Exception as e:
-                if self.tick % 40 == 0:
-                    self.get_logger().warn(f'MPC: {e}')
-
-        # Send command
-        self._send_cmd(v_pp, omega_pp)
+        self._send(v, omega)
 
         # Diagnostics
-        e = Float32(); e.data = tracking_err; self.err_pub.publish(e)
-        wm = Float32(); wm.data = float(w); self.wgt_pub.publish(wm)
-        m = String(); m.data = mode; self.mode_pub.publish(m)
+        self._pub_diag(dist, w, mode)
 
         # Log every ~1 second
-        if self.tick % 20 == 0:
-            tgt = target_idx
+        if self.tick_count % 20 == 0:
             self.get_logger().info(
-                f'[{tgt:4d}] pos=({self.x:+.2f},{self.y:+.2f}) θ={self.theta:+.2f} | '
-                f'tgt=({self.traj_x[tgt]:+.2f},{self.traj_y[tgt]:+.2f}) | '
-                f'err={tracking_err:.3f}m | v={v_pp:.3f} ω={omega_pp:+.3f} | {mode}'
+                f'[wp={self.wp_idx}/{self.n_wp}] '
+                f'pos=({self.x:+.2f},{self.y:+.2f}) θ={self.theta:+.2f} | '
+                f'tgt=({tx:+.2f},{ty:+.2f}) | '
+                f'd={dist:.3f}m Δθ={heading_err:+.2f} | '
+                f'v={v:.3f} ω={omega:+.3f} | {mode}'
             )
 
-        self.tick += 1
+        self.tick_count += 1
 
-    # ── Publish ────────────────────────────────────────────────
-    def _send_cmd(self, v, omega):
+    # ── Publish helpers ────────────────────────────────────────
+    def _send(self, v, omega):
         cmd = TwistStamped()
         cmd.header.stamp = self.get_clock().now().to_msg()
         cmd.header.frame_id = 'base_link'
         cmd.twist.linear.x = float(v)
         cmd.twist.angular.z = float(omega)
         self.cmd_pub.publish(cmd)
+
+    def _pub_diag(self, err, w, mode):
+        e = Float32(); e.data = float(err); self.err_pub.publish(e)
+        wm = Float32(); wm.data = float(w); self.wgt_pub.publish(wm)
+        m = String(); m.data = mode; self.mode_pub.publish(m)
 
     def _pub_ref_path_once(self):
         if self._ref_published:
@@ -333,30 +288,16 @@ class HybridControllerNode(Node):
         p = Path()
         p.header.stamp = self.get_clock().now().to_msg()
         p.header.frame_id = 'odom'
-        for i in range(0, self.N, 5):
+        for i in range(0, self.dense_N, 5):
             ps = PoseStamped()
             ps.header.frame_id = 'odom'
-            ps.pose.position.x = float(self.traj_x[i])
-            ps.pose.position.y = float(self.traj_y[i])
-            ps.pose.orientation.z = float(np.sin(self.traj_theta[i] / 2))
-            ps.pose.orientation.w = float(np.cos(self.traj_theta[i] / 2))
+            ps.pose.position.x = float(self.dense_x[i])
+            ps.pose.position.y = float(self.dense_y[i])
+            ps.pose.orientation.z = float(np.sin(self.dense_theta[i] / 2))
+            ps.pose.orientation.w = float(np.cos(self.dense_theta[i] / 2))
             p.poses.append(ps)
         self.ref_pub.publish(p)
         self.get_logger().info(f'📍 Ref path: {len(p.poses)} poses')
-
-    def _pub_predicted_path(self, states):
-        p = Path()
-        p.header.stamp = self.get_clock().now().to_msg()
-        p.header.frame_id = 'odom'
-        for s in states:
-            ps = PoseStamped()
-            ps.header.frame_id = 'odom'
-            ps.pose.position.x = float(s[0])
-            ps.pose.position.y = float(s[1])
-            ps.pose.orientation.z = float(np.sin(s[2] / 2))
-            ps.pose.orientation.w = float(np.cos(s[2] / 2))
-            p.poses.append(ps)
-        self.pred_pub.publish(p)
 
 
 def main(args=None):
@@ -365,7 +306,7 @@ def main(args=None):
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
-        node._send_cmd(0.0, 0.0)
+        node._send(0.0, 0.0)
         node.get_logger().info('Stopped.')
     finally:
         node.destroy_node()
