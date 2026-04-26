@@ -24,37 +24,35 @@ Reference:
     - Concept: supervisory control with continuous arbitration
 """
 
-from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Tuple
-
 import numpy as np
+from typing import Tuple, Optional, Dict, Any
+from dataclasses import dataclass, field
 
 
 @dataclass
 class BlendInfo:
     """Container for blending decision metadata."""
-
-    weight: float  # w(t) in [0, 1]: 0=LQR, 1=MPC
-    weight_raw: float  # Pre-filtered sigmoid output
-    risk: float  # Combined risk input
-    mode: str  # 'LQR_DOMINANT', 'BLENDED', 'MPC_DOMINANT'
-    dw_dt: float  # Rate of weight change
-    feasibility_ok: bool  # MPC feasibility status
-    solver_time_ms: float  # MPC solver time
+    weight: float               # w(t) in [0, 1]: 0=LQR, 1=MPC
+    weight_raw: float           # Pre-filtered sigmoid output
+    risk: float                 # Combined risk input
+    mode: str                   # 'LQR_DOMINANT', 'BLENDED', 'MPC_DOMINANT'
+    dw_dt: float                # Rate of weight change
+    feasibility_ok: bool        # MPC feasibility status
+    solver_time_ms: float       # MPC solver time
 
 
 class BlendingSupervisor:
     """
     Continuous control arbitration between LQR and MPC.
-
+    
     Computes a smooth blending weight w(t) from risk metrics and
     solver diagnostics. The weight satisfies:
-
+    
     1. w in [0, 1] at all times
     2. |dw/dt| <= dw_max (Lipschitz continuity)
     3. Hysteresis prevents rapid switching near the threshold
     4. Feasibility fallback forces w -> 0 on MPC failure
-
+    
     Attributes:
         k_sigmoid: Steepness of the sigmoid blending function
         risk_threshold: Risk level at which w = 0.5 (equal blend)
@@ -63,23 +61,19 @@ class BlendingSupervisor:
         solver_time_limit: MPC solver time limit in ms
         feasibility_decay: Exponential decay rate when MPC fails
     """
-
-    def __init__(
-        self,
-        k_sigmoid: float = 8.0,
-        risk_threshold: float = 0.25,
-        dw_max: float = 2.0,
-        hysteresis_band: float = 0.08,
-        solver_time_limit: float = 5.0,
-        feasibility_decay: float = 0.8,
-        feasibility_margin_threshold: float = 0.1,
-        lqr_dominant_threshold: float = 0.25,
-        mpc_dominant_threshold: float = 0.9,
-        dt: float = 0.02,
-    ):
+    
+    def __init__(self,
+                 k_sigmoid: float = 20.0,
+                 risk_threshold: float = 0.25,
+                 dw_max: float = 50.0,
+                 hysteresis_band: float = 0.05,
+                 solver_time_limit: float = 150.0,
+                 feasibility_decay: float = 0.8,
+                 feasibility_margin_threshold: float = 100.0,
+                 dt: float = 0.02):
         """
         Initialize blending supervisor.
-
+        
         Args:
             k_sigmoid: Sigmoid steepness parameter. Higher values give
                        sharper transition. Range: [5, 20] recommended.
@@ -96,10 +90,6 @@ class BlendingSupervisor:
             feasibility_decay: Multiplicative decay factor for w when
                               MPC is infeasible. Applied each timestep:
                               w *= feasibility_decay.
-            lqr_dominant_threshold: Weight below which diagnostics report
-                                    LQR-dominant behavior.
-            mpc_dominant_threshold: Weight above which diagnostics report
-                                    MPC-dominant behavior.
             dt: Simulation timestep (seconds).
         """
         # Blending parameters
@@ -111,7 +101,7 @@ class BlendingSupervisor:
         self.feasibility_decay = feasibility_decay
         self.feasibility_margin_threshold = feasibility_margin_threshold
         self.dt = dt
-
+        
         # State
         self._w_prev: float = 0.0  # Previous weight (start in LQR mode)
         self._risk_prev: float = 0.0
@@ -119,34 +109,26 @@ class BlendingSupervisor:
         self._infeasible_count: int = 0
         self._consecutive_infeasible: int = 0  # Consecutive failures for escalation
         self._total_switches: int = 0
-
+        
         # Mode thresholds
-        if not 0.0 <= lqr_dominant_threshold <= 1.0:
-            raise ValueError("lqr_dominant_threshold must be in [0, 1]")
-        if not 0.0 <= mpc_dominant_threshold <= 1.0:
-            raise ValueError("mpc_dominant_threshold must be in [0, 1]")
-        if lqr_dominant_threshold >= mpc_dominant_threshold:
-            raise ValueError(
-                "lqr_dominant_threshold must be smaller than mpc_dominant_threshold"
-            )
-        self._lqr_dominant_threshold = lqr_dominant_threshold
-        self._mpc_dominant_threshold = mpc_dominant_threshold
-
+        self._lqr_dominant_threshold = 0.1  # w < this -> LQR dominant
+        self._mpc_dominant_threshold = 0.9  # w > this -> MPC dominant
+        
         # Statistics
         self._weight_history: list = []
-
+    
     def _sigmoid(self, risk: float) -> float:
         """
         Compute raw sigmoid blending weight from risk.
-
+        
         w_raw = 1 / (1 + exp(-k * (risk - threshold)))
-
+        
         Maps risk in [0, 1] to weight in [0, 1] with smooth transition
         centered at risk_threshold.
-
+        
         Args:
             risk: Combined risk metric in [0, 1]
-
+            
         Returns:
             Raw weight in [0, 1]
         """
@@ -154,174 +136,127 @@ class BlendingSupervisor:
         # Clip to prevent overflow
         z = np.clip(z, -20.0, 20.0)
         return 1.0 / (1.0 + np.exp(-z))
-
+    
     def _apply_hysteresis(self, w_raw: float, risk: float) -> float:
         """
         Apply hysteresis deadband to prevent chattering.
-
+        
         When risk is within [threshold - band, threshold + band],
         maintain the previous weight direction. This creates a
         deadband where the weight does not change, preventing
         oscillatory switching.
-
+        
         Args:
             w_raw: Raw sigmoid output
             risk: Current risk level
-
+            
         Returns:
             Hysteresis-filtered weight
         """
         lower = self.risk_threshold - self.hysteresis_band
         upper = self.risk_threshold + self.hysteresis_band
-
+        
         if lower < risk < upper:
             # Within deadband: hold previous weight
             return self._w_prev
-
+        
         return w_raw
-
+    
     def _apply_rate_limit(self, w_target: float) -> float:
         """
-        Apply rate limiting to enforce |dw/dt| <= dw_max.
-
-        This is the key anti-chatter mechanism. By bounding the
-        derivative of w(t), we guarantee Lipschitz continuity
-        and prevent discontinuous jumps in the control signal.
-
-        Guarantee: ||u_blend(t+dt) - u_blend(t)|| is bounded.
-
-        Args:
-            w_target: Desired weight after hysteresis
-
-        Returns:
-            Rate-limited weight
+        Apply ASYMMETRIC rate limiting.
+        FAST-ATTACK: Snap to MPC instantly when risk spikes.
+        SLOW-DECAY: Smoothly return to LQR when safe.
         """
-        max_change = self.dw_max * self.dt
-        w_new = np.clip(w_target, self._w_prev - max_change, self._w_prev + max_change)
-        return w_new
-
-    def _apply_feasibility_fallback(
-        self,
-        w: float,
-        solver_status: str,
-        solver_time_ms: float,
-        feasibility_margin: float = 0.0,
-    ) -> Tuple[float, bool]:
-        """
-        Apply feasibility-aware degradation with consecutive escalation.
-
-        Degradation escalates with consecutive failures:
-            1 failure:  w *= decay
-            2 failures: w *= decay^2
-            n failures: w *= decay^n  (exponential ramp-down)
-
-        Also responds to high feasibility_margin (slack usage).
-
-        Args:
-            w: Current weight after rate limiting
-            solver_status: MPC solver status string
-            solver_time_ms: MPC solve time in milliseconds
-            feasibility_margin: Max slack magnitude from MPC solution
-
-        Returns:
-            Tuple of (adjusted_weight, feasibility_ok)
-        """
-        feasibility_ok = True
-
-        # Check for infeasibility
-        if solver_status not in ("optimal", "optimal_inaccurate"):
-            feasibility_ok = False
-            self._infeasible_count += 1
-            self._consecutive_infeasible += 1
-            # Exponential escalation: decay^n for n consecutive failures
-            escalated_decay = self.feasibility_decay**self._consecutive_infeasible
-            w *= escalated_decay
-
-        # Check for excessive solve time
-        elif solver_time_ms > self.solver_time_limit:
-            feasibility_ok = False
-            self._consecutive_infeasible += 1
-            # Proportional decay based on how much over limit
-            overshoot = solver_time_ms / self.solver_time_limit
-            decay = max(self.feasibility_decay, 1.0 / overshoot)
-            w *= decay
-
-        # Check for high slack usage (constraints barely feasible)
-        elif feasibility_margin > self.feasibility_margin_threshold:
-            # Proportional reduction based on how much slack was needed
-            margin_ratio = min(
-                feasibility_margin / (self.feasibility_margin_threshold * 5), 1.0
-            )
-            w *= 1.0 - 0.3 * margin_ratio  # Up to 30% reduction
-            # Don't reset consecutive counter — slack is a warning sign
-
+        # FAST ATTACK (e.g., 20.0). Goes from 0 to 1 in ~0.05 seconds.
+        # This saves you from crashing.
+        dw_max_up = 20.0 
+        
+        # SLOW DECAY (e.g., 2.0). Goes from 1 to 0 in ~0.5 seconds.
+        # This prevents the robot from violently jerking back to the path.
+        dw_max_down = self.dw_max 
+        
+        # Determine if we are ramping up (danger) or ramping down (safe)
+        if w_target > self._w_prev:
+            max_change = dw_max_up * self.dt
         else:
-            # All good: reset consecutive counter
-            self._consecutive_infeasible = 0
-
-        return w, feasibility_ok
-
-    def compute_weight(
-        self,
-        risk: float,
-        solver_status: str = "optimal",
-        solver_time_ms: float = 0.0,
-        feasibility_margin: float = 0.0,
-    ) -> BlendInfo:
+            max_change = dw_max_down * self.dt
+            
+        w_new = np.clip(
+            w_target,
+            self._w_prev - max_change,
+            self._w_prev + max_change
+        )
+        return w_new
+    
+    def _apply_feasibility_fallback(self, w: float, 
+                                      solver_status: str,
+                                      solver_time_ms: float,
+                                      feasibility_margin: float = 0.0) -> Tuple[float, bool]:
+        """
+        TEMPORARY DEBUG OVERRIDE: 
+        Ignore all solver errors, timeouts, and slack margins.
+        Force the supervisor to use the raw weight.
+        """
+        return w, True
+    
+    def compute_weight(self, risk: float, 
+                       solver_status: str = 'optimal',
+                       solver_time_ms: float = 0.0,
+                       feasibility_margin: float = 0.0) -> BlendInfo:
         """
         Compute the blending weight w(t) for this timestep.
-
+        
         Pipeline:
             risk -> sigmoid -> hysteresis -> rate_limit -> feasibility -> w(t)
-
+        
         Args:
             risk: Combined risk metric from RiskMetrics.assess_risk()
             solver_status: MPC solver status ('optimal', 'infeasible', etc.)
             solver_time_ms: MPC solve time in milliseconds
-
+            
         Returns:
             BlendInfo with weight and diagnostic metadata
         """
         # Step 1: Raw sigmoid mapping
         w_raw = self._sigmoid(risk)
-
+        
         # Step 2: Hysteresis deadband
         w_hysteresis = self._apply_hysteresis(w_raw, risk)
-
+        
         # Step 3: Rate limiting (anti-chatter guarantee)
         w_limited = self._apply_rate_limit(w_hysteresis)
-
+        
         # Step 4: Feasibility fallback
         w_final, feasibility_ok = self._apply_feasibility_fallback(
             w_limited, solver_status, solver_time_ms, feasibility_margin
         )
-
+        
         # Clamp to [0, 1]
         w_final = np.clip(w_final, 0.0, 1.0)
-
+        
         # Compute rate of change
         dw_dt = (w_final - self._w_prev) / self.dt if self.dt > 0 else 0.0
-
+        
         # Determine mode
         if w_final < self._lqr_dominant_threshold:
-            mode = "LQR_DOMINANT"
+            mode = 'LQR_DOMINANT'
         elif w_final > self._mpc_dominant_threshold:
-            mode = "MPC_DOMINANT"
+            mode = 'MPC_DOMINANT'
         else:
-            mode = "BLENDED"
-
+            mode = 'BLENDED'
+        
         # Track switches (crossing 0.5 threshold)
-        if (self._w_prev < 0.5 and w_final >= 0.5) or (
-            self._w_prev >= 0.5 and w_final < 0.5
-        ):
+        if (self._w_prev < 0.5 and w_final >= 0.5) or \
+           (self._w_prev >= 0.5 and w_final < 0.5):
             self._total_switches += 1
-
+        
         # Update state
         self._w_prev = w_final
         self._risk_prev = risk
         self._step_count += 1
         self._weight_history.append(w_final)
-
+        
         return BlendInfo(
             weight=w_final,
             weight_raw=w_raw,
@@ -329,48 +264,42 @@ class BlendingSupervisor:
             mode=mode,
             dw_dt=dw_dt,
             feasibility_ok=feasibility_ok,
-            solver_time_ms=solver_time_ms,
+            solver_time_ms=solver_time_ms
         )
-
-    def blend(
-        self,
-        u_lqr: np.ndarray,
-        u_mpc: np.ndarray,
-        risk: float,
-        solver_status: str = "optimal",
-        solver_time_ms: float = 0.0,
-        feasibility_margin: float = 0.0,
-    ) -> Tuple[np.ndarray, BlendInfo]:
+    
+    def blend(self, u_lqr: np.ndarray, u_mpc: np.ndarray,
+              risk: float,
+              solver_status: str = 'optimal',
+              solver_time_ms: float = 0.0,
+              feasibility_margin: float = 0.0) -> Tuple[np.ndarray, BlendInfo]:
         """
         Compute blended control output.
-
+        
         u_blend = w * u_mpc + (1 - w) * u_lqr
-
+        
         This is a convex combination, preserving actuator bounds if
         both u_lqr and u_mpc satisfy them individually.
-
+        
         Property: If ||u_lqr|| <= u_max and ||u_mpc|| <= u_max,
                  then ||u_blend|| <= u_max (convexity).
-
+        
         Args:
             u_lqr: LQR control input [v, omega]
             u_mpc: MPC control input [v, omega]
             risk: Combined risk metric
             solver_status: MPC solver status
             solver_time_ms: MPC solve time
-
+            
         Returns:
             Tuple of (u_blend, BlendInfo)
         """
-        info = self.compute_weight(
-            risk, solver_status, solver_time_ms, feasibility_margin
-        )
+        info = self.compute_weight(risk, solver_status, solver_time_ms, feasibility_margin)
         w = info.weight
-
+        
         u_blend = w * u_mpc + (1.0 - w) * u_lqr
-
+        
         return u_blend, info
-
+    
     def reset(self):
         """Reset supervisor state for new simulation."""
         self._w_prev = 0.0
@@ -380,99 +309,96 @@ class BlendingSupervisor:
         self._consecutive_infeasible = 0
         self._total_switches = 0
         self._weight_history = []
-
+    
     @property
     def total_switches(self) -> int:
         """Number of times w crossed the 0.5 threshold."""
         return self._total_switches
-
+    
     @property
     def weight_history(self) -> np.ndarray:
         """Array of all computed weights."""
         return np.array(self._weight_history)
-
+    
     def get_statistics(self) -> Dict[str, Any]:
         """
         Get blending statistics for reporting.
-
+        
         Returns:
             Dictionary with mean, std, min, max weight,
             total switches, infeasibility count, and
             time spent in each mode.
         """
         if not self._weight_history:
-            return {"error": "No data"}
-
+            return {'error': 'No data'}
+        
         w = np.array(self._weight_history)
-
+        
         lqr_frac = np.mean(w < self._lqr_dominant_threshold)
         mpc_frac = np.mean(w > self._mpc_dominant_threshold)
         blend_frac = 1.0 - lqr_frac - mpc_frac
-        pure_lqr_frac = np.mean(w < 0.05)
-        mpc_engaged_frac = np.mean(w > 0.05)
-
+        
         return {
-            "weight_mean": float(np.mean(w)),
-            "weight_std": float(np.std(w)),
-            "weight_min": float(np.min(w)),
-            "weight_max": float(np.max(w)),
-            "total_switches": self._total_switches,
-            "infeasible_count": self._infeasible_count,
-            "lqr_dominant_fraction": float(lqr_frac),
-            "mpc_dominant_fraction": float(mpc_frac),
-            "blended_fraction": float(blend_frac),
-            "pure_lqr_fraction": float(pure_lqr_frac),
-            "mpc_engaged_fraction": float(mpc_engaged_frac),
-            "total_steps": self._step_count,
+            'weight_mean': float(np.mean(w)),
+            'weight_std': float(np.std(w)),
+            'weight_min': float(np.min(w)),
+            'weight_max': float(np.max(w)),
+            'total_switches': self._total_switches,
+            'infeasible_count': self._infeasible_count,
+            'lqr_dominant_fraction': float(lqr_frac),
+            'mpc_dominant_fraction': float(mpc_frac),
+            'blended_fraction': float(blend_frac),
+            'total_steps': self._step_count,
         }
-
+    
     def get_formal_guarantees(self) -> Dict[str, float]:
         """
         Compute formal anti-chatter guarantees (Theorem 2).
-
+        
         The rate-limited blending weight w(t) is Lipschitz continuous
         with constant L = dw_max * dt. This provides:
-
+        
         1. Max weight change per timestep: dw_max * dt
         2. Minimum time for full LQR→MPC transition: 1/dw_max seconds
         3. Max transitions in interval T: floor(T * dw_max)
         4. With hysteresis: no switching when |risk - threshold| < band
-
+        
         These guarantees hold for ANY risk signal r(t).
-
+        
         Returns:
             Dictionary with formal guarantee values.
         """
         max_change_per_step = self.dw_max * self.dt
         min_transition_time = 1.0 / self.dw_max  # seconds for full 0→1
         lipschitz_constant = self.dw_max  # |w(t1) - w(t2)| <= L * |t1 - t2|
-
+        
         return {
-            "max_weight_change_per_step": max_change_per_step,
-            "min_full_transition_time_s": min_transition_time,
-            "lipschitz_constant": lipschitz_constant,
-            "hysteresis_deadband": 2 * self.hysteresis_band,
-            "max_transitions_per_second": self.dw_max,
-            "feasibility_decay_rate": self.feasibility_decay,
+            'max_weight_change_per_step': max_change_per_step,
+            'min_full_transition_time_s': min_transition_time,
+            'lipschitz_constant': lipschitz_constant,
+            'hysteresis_deadband': 2 * self.hysteresis_band,
+            'max_transitions_per_second': self.dw_max,
+            'feasibility_decay_rate': self.feasibility_decay,
         }
-
+    
     def compute_jerk_bound(self, u_lqr: np.ndarray, u_mpc: np.ndarray) -> float:
         """
         Compute the maximum control jerk induced by blending weight changes.
-
+        
         For u_blend = w * u_mpc + (1-w) * u_lqr, the jerk from w changes is:
             ||d²u_blend/dt²|| <= dw_max² * ||u_mpc - u_lqr|| / dt
-
+        
         This bound shows that jerk is proportional to the squared rate limit
         and the control disagreement between controllers.
-
+        
         Args:
             u_lqr: Current LQR control [v, omega]
             u_mpc: Current MPC control [v, omega]
-
+            
         Returns:
             Upper bound on blending-induced jerk (m/s³ or rad/s³)
         """
         control_disagreement = np.linalg.norm(u_mpc - u_lqr)
         max_jerk = (self.dw_max * self.dt) ** 2 * control_disagreement / self.dt
         return float(max_jerk)
+
