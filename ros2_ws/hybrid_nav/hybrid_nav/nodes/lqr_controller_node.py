@@ -104,7 +104,9 @@ class LQRControllerNode(Node):
         self.cmd_pub = self.create_publisher(TwistStamped, '/cmd_vel', qos)
         self.err_pub = self.create_publisher(Float32, '/lqr/tracking_error', qos)
         self.mode_pub = self.create_publisher(String, '/lqr/mode', qos)
-        self.ref_pub = self.create_publisher(Path, '/lqr/reference_path', 1)
+        
+        # Publish path on the topic RViz expects
+        self.ref_pub = self.create_publisher(Path, '/hybrid/reference_path', 1)
 
         self.create_timer(1.0 / rate, self._control_loop)
         self.create_timer(3.0, self._pub_ref_path_once)
@@ -114,8 +116,14 @@ class LQRControllerNode(Node):
 
     # ── Generate Trajectory ────────────────────────────────────
     def _generate_trajectory(self, duration):
-        t = np.arange(0, duration, self.dt)
         w = self.freq
+        
+        # Ensure duration is an exact multiple of the figure-8 period (T = 2pi/w)
+        T = 2 * np.pi / w
+        num_periods = int(np.ceil(duration / T))
+        perfect_duration = num_periods * T
+        
+        t = np.arange(0, perfect_duration, self.dt)
 
         # Figure-8 Kinematics
         self.ref_x = self.A * np.sin(w * t)
@@ -135,7 +143,7 @@ class LQRControllerNode(Node):
         self.ref_omega[0] = self.ref_omega[1]
         
         self.N = len(t)
-        self.get_logger().info(f'📐 Generated {self.N} trajectory points.')
+        self.get_logger().info(f'📐 Generated {self.N} trajectory points ({num_periods} loops).')
 
     # ── Callbacks ──────────────────────────────────────────────
     def _odom_cb(self, msg):
@@ -151,12 +159,8 @@ class LQRControllerNode(Node):
         if not self.odom_ok:
             return
 
-        if self.current_idx >= self.N:
-            self._send(0.0, 0.0)
-            if self.tick_count % 100 == 0:
-                self.get_logger().info('⏹️ End of trajectory reached.')
-            self.tick_count += 1
-            return
+        # Loop the trajectory infinitely!
+        self.current_idx = self.current_idx % self.N
 
         # 1. Find the target reference point based on nearest distance
         # (This prevents the controller from getting out of sync with time)
