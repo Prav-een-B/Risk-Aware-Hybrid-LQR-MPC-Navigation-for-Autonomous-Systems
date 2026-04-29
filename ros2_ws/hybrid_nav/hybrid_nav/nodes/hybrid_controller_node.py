@@ -219,23 +219,28 @@ class HybridControllerNode(Node):
                 heading_err = normalize_angle(target_heading - self.theta)
 
         # ── Turn-then-Drive logic ──────────────────────────────
+        # Use a small deadband for turning to prevent oscillation
         if abs(heading_err) > self.turn_threshold:
             # PHASE: TURN in place
             v = 0.0
-            omega = 1.5 * heading_err  # Proportional turn
-            omega = np.clip(omega, -self.omega_max * 0.5, self.omega_max * 0.5)
+            # Use smaller gain for turning to prevent overshoot wobbling
+            omega = 1.0 * heading_err
+            omega = np.clip(omega, -self.omega_max * 0.4, self.omega_max * 0.4)
             mode = 'TURN'
         else:
             # PHASE: DRIVE with proportional steering
             v = self.cruise_speed
-            # Reduce speed if there's moderate heading error
-            v *= max(0.3, 1.0 - 2.0 * abs(heading_err))
-            omega = 2.0 * heading_err  # Proportional steering correction
+            # Maintain speed better
+            v *= max(0.5, 1.0 - abs(heading_err))
+            omega = 1.5 * heading_err
             omega = np.clip(omega, -self.omega_max * 0.3, self.omega_max * 0.3)
             mode = 'DRIVE'
 
-        v = float(np.clip(v, 0.0, self.v_max))
-        omega = float(omega)
+        v_base = float(np.clip(v, 0.0, self.v_max))
+        omega_base = float(omega)
+
+        v = v_base
+        omega = omega_base
 
         # ── MPC obstacle avoidance overlay ─────────────────────
         w = 0.0
@@ -245,9 +250,38 @@ class HybridControllerNode(Node):
                 dist_risk, _, _ = self.risk_calc.compute_distance_risk(x0, self.obstacles)
                 blend_info = self.blender.compute_weight(dist_risk)
                 w = blend_info.weight
-                if w > 0.1:
+                
+                if w > 0.05:
                     mode = f'AVOID(w={w:.2f})'
-            except Exception:
+                    
+                    # Generate reference window for MPC
+                    horizon = self.mpc.N
+                    x_refs = np.zeros((horizon + 1, 3))
+                    u_refs = np.zeros((horizon, 2))
+                    
+                    # Simple lookahead path based on target waypoint
+                    for k in range(horizon + 1):
+                        idx = min(self.wp_idx + k, self.n_wp - 1)
+                        x_refs[k] = [self.wp_x[idx], self.wp_y[idx], self.wp_theta[idx]]
+                    for k in range(horizon):
+                        u_refs[k] = [self.cruise_speed, 0.0]
+                        
+                    mpc_obs = [
+                        self.Obstacle(x=o['x'], y=o['y'], radius=o['radius'])
+                        for o in self.obstacles
+                    ]
+                    
+                    # Solve MPC
+                    sol = self.mpc.solve(x0, x_refs, u_refs, mpc_obs)
+                    u_mpc = sol.optimal_control
+                    
+                    # Blend base controller with MPC
+                    v = w * u_mpc[0] + (1.0 - w) * v_base
+                    omega = w * u_mpc[1] + (1.0 - w) * omega_base
+                    
+                    v = float(np.clip(v, -self.v_max, self.v_max))
+                    omega = float(np.clip(omega, -self.omega_max, self.omega_max))
+            except Exception as e:
                 pass
 
         self._send(v, omega)
