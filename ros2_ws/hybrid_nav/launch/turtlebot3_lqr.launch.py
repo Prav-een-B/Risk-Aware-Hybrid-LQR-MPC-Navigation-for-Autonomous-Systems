@@ -84,7 +84,7 @@ def generate_launch_description():
             'control_rate': 20.0,
             'trajectory_amplitude': 0.5,
             'trajectory_frequency': 0.2,
-            'trajectory_duration': 120.0,
+            'trajectory_duration': 1000.0,
             'dt': 0.05,
             'v_max': 0.22,
             'omega_max': 2.84,

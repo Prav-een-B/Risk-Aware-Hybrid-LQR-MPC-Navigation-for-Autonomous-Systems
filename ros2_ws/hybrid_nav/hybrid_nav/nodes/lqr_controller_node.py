@@ -159,26 +159,15 @@ class LQRControllerNode(Node):
         if not self.odom_ok:
             return
 
-        # Loop the trajectory infinitely!
-        self.current_idx = self.current_idx % self.N
+        # Strict time-based tracking. Advance index continuously.
+        # This completely guarantees the trajectory never 'stops' or gets stuck.
+        self.current_idx = (self.current_idx + 1) % self.N
 
-        # 1. Find the target reference point based on nearest distance
-        # (This prevents the controller from getting out of sync with time)
-        search_start = max(0, self.current_idx - 10)
-        search_end = min(self.N, self.current_idx + 30)
+        # 1. Target is simply the current time index
+        target_idx = self.current_idx
         
-        dists = []
-        for i in range(search_start, search_end):
-            d = np.sqrt((self.ref_x[i] - self.x)**2 + (self.ref_y[i] - self.y)**2)
-            dists.append(d)
-            
-        local_min_idx = np.argmin(dists)
-        self.current_idx = search_start + local_min_idx
-        dist_err = dists[local_min_idx]
-
-        # Use a point slightly ahead on the trajectory as the reference (lookahead)
-        # LQR tracks moving targets better with a slight lead
-        target_idx = min(self.current_idx + 4, self.N - 1)
+        # Calculate tracking error for diagnostics
+        dist_err = np.sqrt((self.ref_x[target_idx] - self.x)**2 + (self.ref_y[target_idx] - self.y)**2)
 
         # 2. Extract reference state and control
         x_ref = np.array([
