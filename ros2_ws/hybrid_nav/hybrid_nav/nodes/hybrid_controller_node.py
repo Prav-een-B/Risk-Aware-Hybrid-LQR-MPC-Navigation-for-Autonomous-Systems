@@ -229,23 +229,25 @@ class HybridControllerNode(Node):
         target_heading = np.arctan2(dy, dx)
         heading_err = normalize_angle(target_heading - self.theta)
 
-        # ── Turn-then-Drive logic ──────────────────────────────
-        # Use a small deadband for turning to prevent oscillation
-        if abs(heading_err) > self.turn_threshold:
-            # PHASE: TURN in place
-            v = 0.0
-            # Use smaller gain for turning to prevent overshoot wobbling
-            omega = 1.0 * heading_err
-            omega = np.clip(omega, -self.omega_max * 0.4, self.omega_max * 0.4)
-            mode = 'TURN'
-        else:
-            # PHASE: DRIVE with proportional steering
-            v = self.cruise_speed
-            # Maintain speed better
-            v *= max(0.5, 1.0 - abs(heading_err))
-            omega = 1.5 * heading_err
-            omega = np.clip(omega, -self.omega_max * 0.3, self.omega_max * 0.3)
-            mode = 'DRIVE'
+        # ── Smooth Continuous Steering ──────────────────────────
+        # Instead of stopping to turn, we drive continuously while steering.
+        # This prevents the 'jiggly' start/stop motion.
+        
+        # Base forward speed
+        v = self.cruise_speed
+        
+        # Smoothly slow down on sharp turns (but never stop completely)
+        v *= max(0.4, 1.0 - 0.8 * abs(heading_err))
+        
+        # Proportional steering based on heading error
+        omega = 2.0 * heading_err
+        
+        # If heading error is extreme (>90 deg), prioritize turning
+        if abs(heading_err) > np.pi / 2:
+            v *= 0.2
+            omega = 3.0 * heading_err
+            
+        mode = 'TRACK'
 
         v_base = float(np.clip(v, 0.0, self.v_max))
         omega_base = float(omega)
