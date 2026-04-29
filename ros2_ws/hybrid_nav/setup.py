@@ -33,6 +33,7 @@ setup(
             'hybrid_controller_node = hybrid_nav.nodes.hybrid_controller_node:main',
             'obstacle_publisher_node = hybrid_nav.nodes.obstacle_publisher_node:main',
             'drive_test_node = hybrid_nav.nodes.drive_test_node:main',
+            'lqr_controller_node = hybrid_nav.nodes.lqr_controller_node:main',
         ],
     },
 )
