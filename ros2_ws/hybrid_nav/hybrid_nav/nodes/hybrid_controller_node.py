@@ -194,29 +194,40 @@ class HybridControllerNode(Node):
             self.tick_count += 1
             return
 
-        # Current waypoint target
-        tx = self.wp_x[self.wp_idx]
-        ty = self.wp_y[self.wp_idx]
+        # ── Find Closest Waypoint ──────────────────────────────
+        # Search locally around the last known waypoint
+        search_start = max(0, self.wp_idx - 5)
+        search_end = min(self.n_wp, self.wp_idx + 20)
+        
+        dists = []
+        for i in range(search_start, search_end):
+            d = np.sqrt((self.wp_x[i] - self.x)**2 + (self.wp_y[i] - self.y)**2)
+            dists.append(d)
+            
+        local_min_idx = np.argmin(dists)
+        self.wp_idx = search_start + local_min_idx
+        dist_to_closest = dists[local_min_idx]
+        
+        # ── Find Lookahead Point ───────────────────────────────
+        target_idx = self.wp_idx
+        for i in range(self.wp_idx, self.n_wp):
+            d = np.sqrt((self.wp_x[i] - self.x)**2 + (self.wp_y[i] - self.y)**2)
+            if d >= self.lookahead:
+                target_idx = i
+                break
+        else:
+            # If no point is far enough, just aim for the end of the path
+            target_idx = self.n_wp - 1
+            
+        tx = self.wp_x[target_idx]
+        ty = self.wp_y[target_idx]
 
-        # Distance and angle to waypoint
+        # Calculate heading to the lookahead point
         dx = tx - self.x
         dy = ty - self.y
         dist = np.sqrt(dx**2 + dy**2)
         target_heading = np.arctan2(dy, dx)
         heading_err = normalize_angle(target_heading - self.theta)
-
-        # ── Waypoint advancement ───────────────────────────────
-        # If close enough to current waypoint, advance
-        if dist < 0.08:
-            self.wp_idx += 1
-            if self.wp_idx < self.n_wp:
-                tx = self.wp_x[self.wp_idx]
-                ty = self.wp_y[self.wp_idx]
-                dx = tx - self.x
-                dy = ty - self.y
-                dist = np.sqrt(dx**2 + dy**2)
-                target_heading = np.arctan2(dy, dx)
-                heading_err = normalize_angle(target_heading - self.theta)
 
         # ── Turn-then-Drive logic ──────────────────────────────
         # Use a small deadband for turning to prevent oscillation
