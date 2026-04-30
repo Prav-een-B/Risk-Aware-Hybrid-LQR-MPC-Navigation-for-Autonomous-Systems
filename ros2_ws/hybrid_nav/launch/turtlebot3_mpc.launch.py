@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Launch: TurtleBot3 + Pure LQR Controller + Obstacles + RViz
+Launch: TurtleBot3 + Pure MPC Controller + Obstacles + RViz
 ===========================================================
 
 Launches:
   1. Gazebo with custom obstacle world
   2. TurtleBot3 Burger spawn
   3. Robot state publisher
-  4. PURE LQR controller node (no hybrid logic)
-  5. Obstacle publisher node (for visualization only)
+  4. PURE MPC controller node (no hybrid logic, no LQR)
+  5. Obstacle publisher node
   6. RViz2 visualization
 """
 
@@ -38,9 +38,8 @@ def generate_launch_description():
     x_pose = LaunchConfiguration('x_pose', default='0.0')
     y_pose = LaunchConfiguration('y_pose', default='0.0')
 
-    # For pure LQR, we must use an empty world because the hybrid_obstacle_world
-    # has a physical cylinder at x=0.55 that literally blocks the tip of the figure-8!
-    world = 'empty.sdf'
+    # For MPC, we can use the obstacle world since MPC avoids obstacles!
+    world = os.path.join(hybrid_nav_dir, 'worlds', 'hybrid_obstacle_world.sdf')
     
     set_gz_model_path = AppendEnvironmentVariable(
         'GZ_SIM_RESOURCE_PATH',
@@ -75,26 +74,27 @@ def generate_launch_description():
         launch_arguments={'x_pose': x_pose, 'y_pose': y_pose}.items(),
     )
 
-    # 5. Pure LQR Controller Node
-    lqr_controller = Node(
+    # 5. Pure MPC Controller Node
+    mpc_controller = Node(
         package='hybrid_nav',
-        executable='lqr_controller_node',  # USING THE NEW PURE LQR NODE
-        name='lqr_controller',
+        executable='mpc_controller_node',  # USING THE NEW PURE MPC NODE
+        name='mpc_controller',
         output='screen',
         parameters=[{
             'use_sim_time': True,
             'control_rate': 20.0,
             'trajectory_amplitude': 0.5,
-            'trajectory_frequency': 0.08,
-            'trajectory_duration': 1000.0,
+            'trajectory_frequency': 0.15,
             'dt': 0.05,
             'v_max': 0.22,
             'omega_max': 2.84,
-            'q_x': 5.0,
-            'q_y': 5.0,
-            'q_theta': 20.0,
+            'horizon': 10,
+            'd_safe': 0.30,
+            'q_x': 20.0,
+            'q_y': 20.0,
+            'q_theta': 5.0,
             'r_v': 1.0,
-            'r_omega': 0.1,
+            'r_omega': 0.5,
         }],
     )
 
@@ -128,7 +128,7 @@ def generate_launch_description():
     ld.add_action(gz_client)
     ld.add_action(robot_state_publisher)
     ld.add_action(spawn_turtlebot)
-    ld.add_action(lqr_controller)
+    ld.add_action(mpc_controller)
     ld.add_action(obstacle_publisher)
     ld.add_action(rviz)
 

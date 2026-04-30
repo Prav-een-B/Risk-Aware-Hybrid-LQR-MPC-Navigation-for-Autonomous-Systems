@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Pure LQR Controller Node for TurtleBot3
-=======================================
+Pure Adaptive MPC Controller Node for TurtleBot3
+================================================
 
-This node strictly runs the pure LQR algorithm to track a reference trajectory.
-It does NOT include MPC or any hybrid logic.
+This node strictly runs the Adaptive MPC algorithm for trajectory tracking
+and obstacle avoidance. It does NOT include any hybrid logic.
 """
 
 import numpy as np
@@ -14,17 +14,15 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy
 
 from geometry_msgs.msg import TwistStamped, PoseStamped
 from nav_msgs.msg import Odometry, Path
-from std_msgs.msg import Float32, String
+from std_msgs.msg import Float32, String, Float32MultiArray
 
-# Import the existing LQR controller logic
 try:
-    from hybrid_nav.controllers.lqr_controller import LQRController
+    from hybrid_nav.controllers.adaptive_mpc_controller import AdaptiveMPCController
 except ImportError:
-    # Fallback if running outside full package context
     import sys
     import os
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from controllers.lqr_controller import LQRController
+    from controllers.adaptive_mpc_controller import AdaptiveMPCController
 
 
 def euler_from_quaternion(q):
@@ -34,37 +32,41 @@ def euler_from_quaternion(q):
 
 
 def normalize_angle(a):
-    """Wrap to [-pi, pi]."""
     return (a + np.pi) % (2 * np.pi) - np.pi
 
+class DummyObstacle:
+    def __init__(self, x, y, radius):
+        self.x = x
+        self.y = y
+        self.radius = radius
 
-class LQRControllerNode(Node):
+class AdaptiveMPCControllerNode(Node):
     def __init__(self):
-        super().__init__('lqr_controller_node')
+        super().__init__('adaptive_mpc_controller_node')
 
-        # ── Parameters ─────────────────────────────────────────
         self.declare_parameter('control_rate', 20.0)
         self.declare_parameter('trajectory_amplitude', 0.5)
-        self.declare_parameter('trajectory_frequency', 0.2)
-        self.declare_parameter('trajectory_duration', 120.0)
+        self.declare_parameter('trajectory_frequency', 0.15)
         self.declare_parameter('dt', 0.05)
         self.declare_parameter('v_max', 0.22)
         self.declare_parameter('omega_max', 2.84)
         
-        # LQR tuning weights
-        self.declare_parameter('q_x', 5.0)
-        self.declare_parameter('q_y', 5.0)
-        self.declare_parameter('q_theta', 2.0)
-        self.declare_parameter('r_v', 1.0)
-        self.declare_parameter('r_omega', 0.5)
+        self.declare_parameter('horizon', 10)
+        self.declare_parameter('d_safe', 0.25)
+        self.declare_parameter('q_x', 30.0)
+        self.declare_parameter('q_y', 30.0)
+        self.declare_parameter('q_theta', 5.0)
+        self.declare_parameter('r_v', 0.1)
+        self.declare_parameter('r_omega', 0.1)
 
         rate = self.get_parameter('control_rate').value
         self.A = self.get_parameter('trajectory_amplitude').value
         self.freq = self.get_parameter('trajectory_frequency').value
-        dur = self.get_parameter('trajectory_duration').value
         self.dt = self.get_parameter('dt').value
         self.v_max = self.get_parameter('v_max').value
         self.omega_max = self.get_parameter('omega_max').value
+        self.horizon = self.get_parameter('horizon').value
+        self.d_safe = self.get_parameter('d_safe').value
 
         Q_diag = [
             self.get_parameter('q_x').value,
@@ -76,53 +78,52 @@ class LQRControllerNode(Node):
             self.get_parameter('r_omega').value
         ]
 
-        # ── Initialize pure LQR Controller ─────────────────────
-        self.lqr = LQRController(
-            Q_diag=Q_diag, 
-            R_diag=R_diag, 
-            dt=self.dt, 
-            v_max=self.v_max, 
-            omega_max=self.omega_max
+        self.mpc = AdaptiveMPCController(
+            prediction_horizon=self.horizon,
+            dt=self.dt,
+            d_safe=self.d_safe,
+            v_max=self.v_max,
+            omega_max=self.omega_max,
+            Q_diag=Q_diag,
+            R_diag=R_diag,
+            enable_adaptation=True
         )
-        self.get_logger().info(f'✅ Pure LQR Controller Initialized. Q={Q_diag}, R={R_diag}')
+        self.get_logger().info('✅ Pure Adaptive MPC Controller Initialized.')
 
-        # ── Trajectory: generate dense path ────────────────────
-        self._generate_trajectory(dur)
+        self._generate_trajectory()
 
-        # ── State ──────────────────────────────────────────────
         self.x = 0.0
         self.y = 0.0
         self.theta = 0.0
         self.odom_ok = False
         self.tick_count = 0
         self.current_idx = 0
+        self.obstacles = []
+        
+        self.x_prev = None
+        self.u_prev = None
 
-        # ── ROS ────────────────────────────────────────────────
         qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.RELIABLE)
         self.create_subscription(Odometry, '/odom', self._odom_cb, qos)
+        self.create_subscription(Float32MultiArray, '/obstacles', self._obs_cb, qos)
 
         self.cmd_pub = self.create_publisher(TwistStamped, '/cmd_vel', qos)
-        self.err_pub = self.create_publisher(Float32, '/lqr/tracking_error', qos)
-        self.mode_pub = self.create_publisher(String, '/lqr/mode', qos)
-        
-        # Publish path on the topic RViz expects
+        self.err_pub = self.create_publisher(Float32, '/mpc/tracking_error', qos)
+        self.mode_pub = self.create_publisher(String, '/mpc/mode', qos)
         self.ref_pub = self.create_publisher(Path, '/hybrid/reference_path', 1)
+        self.pred_pub = self.create_publisher(Path, '/hybrid/predicted_path', 1)
 
         self.create_timer(1.0 / rate, self._control_loop)
         self.create_timer(3.0, self._pub_ref_path_once)
         self._ref_published = False
 
-        self.get_logger().info('🤖 LQR Node Ready to track trajectory')
+        self.get_logger().info('🤖 Adaptive MPC Node Ready to track trajectory')
 
-    # ── Generate Trajectory ────────────────────────────────────
-    def _generate_trajectory(self, duration):
+    def _generate_trajectory(self):
         w = self.freq
-        
-        # Ensure duration is exactly ONE figure-8 period (T = 2pi/w)
         T = 2 * np.pi / w
         t = np.arange(0, T, self.dt)
 
-        # Figure-8 Kinematics
         self.ref_x = self.A * np.sin(w * t)
         self.ref_y = (self.A / 2.0) * np.sin(2.0 * w * t)
         
@@ -132,7 +133,6 @@ class LQRControllerNode(Node):
         self.ref_theta = np.arctan2(dy_dt, dx_dt)
         self.ref_v = np.clip(np.sqrt(dx_dt**2 + dy_dt**2), 0.0, self.v_max)
         
-        # Calculate angular velocity (omega = d(theta)/dt)
         self.ref_omega = np.zeros_like(t)
         for i in range(1, len(t)):
             dtheta = normalize_angle(self.ref_theta[i] - self.ref_theta[i-1])
@@ -142,7 +142,6 @@ class LQRControllerNode(Node):
         self.N = len(t)
         self.get_logger().info(f'📐 Generated EXACTLY 1 loop: {self.N} points.')
 
-    # ── Callbacks ──────────────────────────────────────────────
     def _odom_cb(self, msg):
         self.x = msg.pose.pose.position.x
         self.y = msg.pose.pose.position.y
@@ -151,15 +150,28 @@ class LQRControllerNode(Node):
             self.odom_ok = True
             self.get_logger().info(f'📡 Odom OK: ({self.x:.3f}, {self.y:.3f})')
 
-    # ── Main Control Loop ──────────────────────────────────────
+    def _obs_cb(self, msg):
+        obs_list = []
+        for i in range(0, len(msg.data), 3):
+            if i + 2 < len(msg.data):
+                obs_list.append(DummyObstacle(
+                    x=float(msg.data[i]),
+                    y=float(msg.data[i+1]),
+                    radius=float(msg.data[i+2])
+                ))
+        self.obstacles = obs_list
+
     def _control_loop(self):
         if not self.odom_ok:
             return
 
-        # 1. Find the target reference point based on nearest distance.
-        # Use a wraparound moving window to prevent jumping at trajectory crossings
-        # and to seamlessly loop back to the start.
-        window = 40  # Search 40 points behind and ahead (~2 seconds)
+        x_current = np.array([self.x, self.y, self.theta])
+
+        # Adapt parameters using previous state and control
+        if self.x_prev is not None and self.u_prev is not None:
+            self.mpc.adapt_parameters(x_current, self.x_prev, self.u_prev)
+
+        window = 40
         dists = []
         indices = []
         for i in range(-window, window + 1):
@@ -172,53 +184,61 @@ class LQRControllerNode(Node):
         self.current_idx = indices[local_min_idx]
         dist_err = dists[local_min_idx]
 
-        # Use a point further ahead on the trajectory to anticipate sharp curves
-        # This keeps the LQR heading error small, preventing linearization breakdown
-        target_idx = (self.current_idx + 15) % self.N
-
-        # 2. Extract reference state and control
-        x_ref = np.array([
-            self.ref_x[target_idx],
-            self.ref_y[target_idx],
-            self.ref_theta[target_idx]
-        ])
+        x_refs = np.zeros((self.horizon + 1, 3))
+        u_refs = np.zeros((self.horizon, 2))
         
-        u_ref = np.array([
-            self.ref_v[target_idx],
-            self.ref_omega[target_idx]
-        ])
+        start_idx = (self.current_idx + 2) % self.N
+        for k in range(self.horizon + 1):
+            idx = (start_idx + k) % self.N
+            x_refs[k] = [self.ref_x[idx], self.ref_y[idx], self.ref_theta[idx]]
+            if k < self.horizon:
+                u_refs[k] = [self.ref_v[idx], self.ref_omega[idx]]
         
-        x_current = np.array([self.x, self.y, self.theta])
-
-        # 3. Call the Pure LQR Algorithm
+        v, omega = 0.0, 0.0
+        mode = "AMPC_FAILED"
         try:
-            u_opt = self.lqr.compute_control(x_current, x_ref, u_ref)
-            v = float(u_opt[0])
-            omega = float(u_opt[1])
+            solution = self.mpc.solve_tracking(
+                x0=x_current, 
+                x_refs=x_refs, 
+                u_refs=u_refs, 
+                obstacles=self.obstacles
+            )
+            
+            if solution.feasible:
+                v = float(solution.optimal_control[0])
+                omega = float(solution.optimal_control[1])
+                mode = f"AMPC_OK (Slack={solution.feasibility_margin:.2f})"
+                
+                if solution.predicted_states is not None:
+                    self._pub_pred_path(solution.predicted_states)
+            else:
+                self.get_logger().warn("Adaptive MPC Infeasible!")
+                mode = "AMPC_INFEASIBLE"
+                if self.u_prev is not None:
+                    v = float(np.clip(self.u_prev[0] * 0.8, 0.0, self.v_max))
+                    omega = float(np.clip(self.u_prev[1] * 0.8, -self.omega_max, self.omega_max))
+                
         except Exception as e:
-            self.get_logger().error(f"LQR computation failed: {e}")
-            v, omega = 0.0, 0.0
+            self.get_logger().error(f"Adaptive MPC computation failed: {e}")
 
-        # Safety clipping - strictly prevent backward driving!
-        # When LQR linearization breaks down on sharp corners, it commands v < 0.
-        # We must force v >= 0.0 so the robot always drives forward and corrects its heading.
         v = float(np.clip(v, 0.0, self.v_max))
         omega = float(np.clip(omega, -self.omega_max, self.omega_max))
 
-        # Publish command
+        self.x_prev = x_current
+        self.u_prev = np.array([v, omega])
+
         self._send(v, omega)
 
-        # Publish diagnostics
         e = Float32(); e.data = float(dist_err); self.err_pub.publish(e)
-        m = String(); m.data = 'LQR_TRACKING'; self.mode_pub.publish(m)
+        m = String(); m.data = mode; self.mode_pub.publish(m)
 
-        # Log
         if self.tick_count % 20 == 0:
+            params = self.mpc.param_estimates
             self.get_logger().info(
-                f'[LQR {self.current_idx}/{self.N}] '
+                f'[AMPC {self.current_idx}/{self.N}] '
                 f'pos=({self.x:+.2f},{self.y:+.2f}) '
                 f'err={dist_err:.3f}m | '
-                f'v={v:.3f} ω={omega:+.3f}'
+                f'v={v:.3f} ω={omega:+.3f} | Params=[{params[0]:.2f}, {params[1]:.2f}] | {mode}'
             )
 
         self.tick_count += 1
@@ -248,15 +268,27 @@ class LQRControllerNode(Node):
             p.poses.append(ps)
         self.ref_pub.publish(p)
 
+    def _pub_pred_path(self, states):
+        p = Path()
+        p.header.stamp = self.get_clock().now().to_msg()
+        p.header.frame_id = 'odom'
+        for i in range(states.shape[0]):
+            ps = PoseStamped()
+            ps.header.frame_id = 'odom'
+            ps.pose.position.x = float(states[i, 0])
+            ps.pose.position.y = float(states[i, 1])
+            p.poses.append(ps)
+        self.pred_pub.publish(p)
+
 
 def main(args=None):
     rclpy.init(args=args)
-    node = LQRControllerNode()
+    node = AdaptiveMPCControllerNode()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
         node._send(0.0, 0.0)
-        node.get_logger().info('LQR Node Stopped.')
+        node.get_logger().info('Adaptive MPC Node Stopped.')
     finally:
         node.destroy_node()
         rclpy.shutdown()
